@@ -9,7 +9,7 @@
       "commands": [
         "...",
         { "src": "requirements.txt", "dest": "requirements.txt" },
-        "PATH:/mise/shims",
+        { "path": "/mise/shims" },
         "python3 -m pip install -r requirements.txt"
       ]
     }
