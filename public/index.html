@@ -1,0 +1,1205 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>نظام معالجة الطلبات</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="header">
+    <div class="brand">
+        <span class="brand-badge">ط</span>
+        <div>
+            <h1>نظام معالجة الطلبات</h1>
+            <p>استيراد النصوص الخام وتجهيز بيانات الشحن</p>
+        </div>
+    </div>
+    <div class="header-info" id="headerInfo">جاهز للعمل</div>
+    <div class="header-info" id="lastRefresh" style="display:none;"></div>
+</div>
+
+<div class="container">
+    <!-- Input -->
+    <div class="input-section">
+        <label for="orderInput">نص الأوردر الخام</label>
+        <textarea id="orderInput" placeholder="الصق نص الأوردر هنا... (افصل بين العملاء بـ ||||||||)"></textarea>
+        <p class="hint">افصل بين عملاء متعددين باستخدام الفاصل ||||||||</p>
+
+        <div class="btn-row">
+            <button class="btn btn-primary" id="processBtn" onclick="processOrders()">معالجة الطلب</button>
+            <button class="btn btn-success" id="exportBtn" onclick="exportToExcel()" disabled>تصدير Excel</button>
+            <button class="btn btn-danger" id="deleteAllBtn" onclick="deleteAll()" disabled>حذف الكل</button>
+            <button class="btn btn-secondary" id="clearBtn" onclick="clearData()" disabled>مسح</button>
+        </div>
+        <div class="saved-indicator" id="savedIndicator"></div>
+    </div>
+
+    <!-- Status Tabs -->
+    <div class="tabs-row" id="tabsRow" style="display:none;">
+        <button class="tab active" data-tab="confirmed" onclick="switchTab('confirmed')">
+            مسجَّل <span class="tab-count" id="count-confirmed">0</span>
+        </button>
+        <button class="tab" data-tab="needs_review" onclick="switchTab('needs_review')">
+            يحتاج مراجعة <span class="tab-count" id="count-needs_review">0</span>
+        </button>
+        <button class="tab" data-tab="error" onclick="switchTab('error')">
+            أخطاء <span class="tab-count" id="count-error">0</span>
+        </button>
+        <button class="tab" data-tab="rejected" onclick="switchTab('rejected')">
+            مرفوض <span class="tab-count" id="count-rejected">0</span>
+        </button>
+    </div>
+
+    <!-- Bulk Actions Bar -->
+    <div class="bulk-bar" id="bulkBar" style="display:none;">
+        <span class="count" id="bulkCount">لم يتم تحديد أي عميل</span>
+        <button class="btn btn-sm btn-danger" id="bulkDeleteBtn" onclick="deleteSelected()">حذف المحدد (0)</button>
+        <button class="btn btn-sm btn-secondary" onclick="deselectAll()">إلغاء التحديد</button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row" id="statsRow" style="display:none;">
+        <div class="stat-box blue">
+            <div class="num" id="statTotal">0</div>
+            <div class="label">إجمالي العملاء</div>
+        </div>
+        <div class="stat-box green">
+            <div class="num" id="statConfirmed">0</div>
+            <div class="label">مسجَّل</div>
+        </div>
+        <div class="stat-box orange">
+            <div class="num" id="statReview">0</div>
+            <div class="label">يحتاج مراجعة</div>
+        </div>
+        <div class="stat-box red">
+            <div class="num" id="statErrors">0</div>
+            <div class="label">أخطاء</div>
+        </div>
+        <div class="stat-box purple">
+            <div class="num" id="statAISuccess">0</div>
+            <div class="label">اقتراحات ناجحة</div>
+        </div>
+        <div class="stat-box cyan">
+            <div class="num" id="statAIConf">0%</div>
+            <div class="label">متوسط الثقة</div>
+        </div>
+    </div>
+
+    <!-- Results Table -->
+    <div class="results-section" id="resultsSection" style="display:none;">
+        <div class="results-header">
+            <h2>نتائج المعالجة</h2>
+            <span class="results-count" id="resultsCount"></span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width:40px;"><input type="checkbox" class="row-check" onchange="toggleAll(this)"></th>
+                    <th>الاسم</th>
+                    <th>الهاتف</th>
+                    <th>العنوان</th>
+                    <th>الكتب</th>
+                    <th>الإجمالي</th>
+                    <th>الحالة</th>
+                    <th>ملاحظات</th>
+                    <th style="width:170px;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody id="resultsBody"></tbody>
+        </table>
+    </div>
+
+    <!-- Empty State -->
+    <div class="empty-state" id="emptyState">
+        <p>أدخل نص الأوردر واضغط "معالجة" للبدء</p>
+    </div>
+</div>
+
+<div class="footer">
+    <span>يعمل محليًا على جهازك</span>
+    <span>توليد الملف بصيغة J&amp;T</span>
+</div>
+
+<!-- ── Edit Modal ─────────────────────────────────────────── -->
+<div class="modal-backdrop" id="editModal" hidden>
+    <div class="modal">
+        <div class="modal-head">
+            <div>
+                <strong id="modalTitle">تعديل السجل</strong>
+                <span class="modal-meta" id="modalMeta"></span>
+            </div>
+            <button type="button" class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+        <div class="reason-banner" id="modalReason" hidden></div>
+        <form id="editForm" onsubmit="saveCustomer(event)">
+            <div class="edit-grid">
+                <label class="edit-field">
+                    <span>اسم العميل</span>
+                    <input type="text" id="f-name" autocomplete="off">
+                </label>
+                <label class="edit-field">
+                    <span>الحالة</span>
+                    <input type="text" id="f-status" disabled>
+                </label>
+                <label class="edit-field">
+                    <span>هاتف 1</span>
+                    <input type="text" id="f-phone1" dir="ltr" autocomplete="off">
+                </label>
+                <label class="edit-field">
+                    <span>هاتف 2</span>
+                    <input type="text" id="f-phone2" dir="ltr" autocomplete="off">
+                </label>
+            </div>
+
+            <div class="raw-block">
+                <div class="raw-head">
+                    <label>نص العميل الأصلي — عدّله ثم اضغط "حفظ وإعادة إرسال" لإعادة الاستخراج</label>
+                    <button type="button" class="btn btn-sm btn-secondary" id="resendBtn" onclick="resendEdit()" hidden>حفظ وإعادة إرسال</button>
+                </div>
+                <textarea id="f-raw" rows="3"></textarea>
+            </div>
+
+            <div class="edit-grid">
+                <label class="edit-field">
+                    <span>المحافظة</span>
+                    <select id="f-governorate"><option value="">-- اختر --</option></select>
+                </label>
+                <label class="edit-field">
+                    <span>المدينة</span>
+                    <select id="f-city"><option value="">-- اختر --</option></select>
+                </label>
+                <label class="edit-field">
+                    <span>المنطقة</span>
+                    <input type="text" id="f-area" autocomplete="off">
+                </label>
+                <label class="edit-field">
+                    <span>الشارع / تفاصيل العنوان</span>
+                    <input type="text" id="f-street" autocomplete="off">
+                </label>
+            </div>
+
+            <label class="edit-field" style="margin-top:14px;">
+                <span>ملاحظات (اختياري)</span>
+                <textarea id="f-remarks" rows="2"></textarea>
+            </label>
+
+            <div class="books-editor-head">
+                <span>الكتب (<span id="booksCount">0</span>)</span>
+                <button type="button" class="btn btn-sm btn-primary" onclick="showCatalogPicker()">+ إضافة كتاب من القائمة</button>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="addManualBook()">+ كتاب خارج الكتالوج</button>
+            </div>
+
+            <!-- Add-from-catalog picker -->
+            <div class="catalog-picker" id="catalogPicker" hidden>
+                <div class="edit-grid">
+                    <label class="edit-field">
+                        <span>الكتاب</span>
+                        <select id="catalog-book" onchange="onCatalogBookChange()"><option value="">-- اختر الكتاب --</option></select>
+                    </label>
+                    <label class="edit-field">
+                        <span>المرحلة</span>
+                        <select id="catalog-stage" onchange="onCatalogStageChange()">
+                            <option value="">-- اختر المرحلة --</option>
+                        </select>
+                    </label>
+                    <label class="edit-field">
+                        <span>العدد</span>
+                        <input type="number" id="catalog-qty" value="1" min="1" dir="ltr" oninput="onCatalogQtyChange()">
+                    </label>
+                    <div class="edit-field">
+                        <span>السعر</span>
+                        <div class="catalog-price" id="catalog-price">—</div>
+                    </div>
+                </div>
+                <div class="picker-actions">
+                    <button type="button" class="btn btn-sm btn-success" id="catalog-add-btn" onclick="addFromCatalog()" disabled>إضافة للطلب</button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="hideCatalogPicker()">إلغاء</button>
+                </div>
+            </div>
+
+            <div class="books-editor" id="booksEditor"></div>
+
+            <div class="modal-total" id="modalTotal" hidden>الإجمالي: <strong id="modalTotalVal">0</strong> جنيه</div>
+
+            <div class="result-box" id="formResult" hidden></div>
+
+            <div class="modal-actions">
+                <button type="submit" class="btn btn-success" id="saveBtn">حفظ</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">إلغاء</button>
+                <button type="button" class="btn btn-danger" onclick="rejectCustomer()">رفض الطلب</button>
+                <button type="button" class="btn" style="background:#fff;border:1px solid var(--danger);color:var(--danger);" onclick="deleteFromModal()">حذف نهائي</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+let processedData = null;
+let currentTab = 'confirmed';
+let selectedCustomers = new Set();
+let editingCustomerId = null;
+let editingRawText = '';
+let lastRefreshTime = null;
+let booksCatalog = [];
+let govCitiesCache = {};
+let govList = [];
+
+const TAB_LABELS = {
+    confirmed: 'مسجَّل',
+    needs_review: 'يحتاج مراجعة',
+    error: 'خطأ',
+    rejected: 'مرفوض'
+};
+
+// ── Helpers ────────────────────────────────────────────────
+function el(id) { return document.getElementById(id); }
+
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
+function asArray(v) {
+    return v == null ? [] : Array.isArray(v) ? v : [v];
+}
+
+function codTotal(customer) {
+    return (customer.books || []).reduce((sum, b) =>
+        sum + (Number(b.price) > 0 ? Number(b.price) * (Number(b.quantity) || 1) : 0), 0);
+}
+
+function resetSelectAllCheckbox() {
+    const cb = document.querySelector('#resultsSection thead .row-check');
+    if (cb) cb.checked = false;
+}
+
+// ── State Management ───────────────────────────────────────
+async function loadState() {
+    try {
+        const res = await fetch('/api/state');
+        const data = await res.json();
+        if (data.ok && data.state.customers?.length > 0) {
+            processedData = data.state.customers;
+            lastRefreshTime = new Date();
+            updateLastRefresh();
+            displayResults(processedData);
+            enableControls(true);
+            showSavedIndicator(data.state.savedAt);
+        }
+    } catch (err) {
+        console.log('No saved state');
+    }
+}
+
+function enableControls(on) {
+    el('exportBtn').disabled = !on;
+    el('clearBtn').disabled = !on;
+    el('deleteAllBtn').disabled = !on;
+}
+
+// Keep the page in real-time sync with the server state (state.json).
+// Skipped while the edit form is open so in-progress edits aren't clobbered.
+async function syncFromServer() {
+    if (editingCustomerId !== null) return;
+    try {
+        const res = await fetch('/api/state', { cache: 'no-store' });
+        const data = await res.json();
+        if (!data.ok || !Array.isArray(data.state.customers)) return;
+        processedData = data.state.customers;
+        lastRefreshTime = new Date();
+        updateLastRefresh();
+        if (processedData.length > 0) {
+            displayResults(processedData);
+            enableControls(true);
+            showSavedIndicator(data.state.savedAt);
+        } else if (el('resultsSection').style.display === 'block') {
+            processedData = null;
+            editingCustomerId = null;
+            selectedCustomers.clear();
+            resetSelectAllCheckbox();
+            el('resultsSection').style.display = 'none';
+            el('statsRow').style.display = 'none';
+            el('tabsRow').style.display = 'none';
+            el('emptyState').style.display = 'block';
+            el('emptyState').innerHTML = '<p>أدخل نص الأوردر واضغط "معالجة" للبدء</p>';
+            enableControls(false);
+            updateBulkBar();
+        }
+    } catch (err) {
+        console.log('syncFromServer failed');
+    }
+}
+
+function updateLastRefresh() {
+    const node = el('lastRefresh');
+    if (node) {
+        node.style.display = 'inline-block';
+        node.textContent = 'آخر تحديث: ' + new Date().toLocaleTimeString('ar-EG');
+    }
+}
+
+const POLL_MS = 4000;
+const HIDDEN_POLL_MS = 30000;
+function schedulePoll() {
+    const delay = document.hidden ? HIDDEN_POLL_MS : POLL_MS;
+    setTimeout(() => {
+        if (!document.hidden) syncFromServer();
+        schedulePoll();
+    }, delay);
+}
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) syncFromServer();
+});
+schedulePoll();
+
+function showSavedIndicator(savedAt) {
+    const node = el('savedIndicator');
+    if (savedAt) {
+        node.textContent = `تم الحفظ: ${new Date(savedAt).toLocaleTimeString('ar-EG')}`;
+        node.className = 'saved-indicator saved';
+    }
+}
+
+// ── Tabs ───────────────────────────────────────────────────
+function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('.tabs-row .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    selectedCustomers.clear();
+    displayResults(processedData);
+}
+
+function renderTabCounts() {
+    const counts = { confirmed: 0, needs_review: 0, error: 0, rejected: 0 };
+    (processedData || []).forEach(c => { counts[c.status] = (counts[c.status] || 0) + 1; });
+    Object.keys(counts).forEach(s => {
+        const node = el('count-' + s);
+        if (node) node.textContent = counts[s];
+    });
+    el('tabsRow').style.display = 'flex';
+}
+
+// ── Process Orders ─────────────────────────────────────────
+async function processOrders() {
+    const input = el('orderInput').value.trim();
+    const btn = el('processBtn');
+
+    if (!input) { showToast('الرجاء إدخال نص الأوردر', 'error'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'جارٍ المعالجة...';
+    el('resultsSection').style.display = 'none';
+    el('statsRow').style.display = 'none';
+    el('emptyState').style.display = 'block';
+    el('emptyState').innerHTML = '<div class="loading">جارٍ معالجة الطلبات...</div>';
+    enableControls(false);
+    el('savedIndicator').textContent = '';
+    selectedCustomers.clear();
+    updateBulkBar();
+
+    try {
+        const response = await fetch('/api/process', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: input })
+        });
+        const data = await response.json();
+        if (!data.ok) throw new Error(data.error || 'Failed');
+
+        processedData = data.result.customers;
+        displayResults(processedData);
+        enableControls(true);
+        showSavedIndicator(data.result.savedAt || new Date().toISOString());
+        showToast('تمت المعالجة بنجاح', 'success');
+    } catch (err) {
+        el('emptyState').innerHTML = `<p style="color:#dc2626;">خطأ: ${esc(err.message)}</p>`;
+        showToast('فشل المعالجة: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'معالجة الطلب';
+    }
+}
+
+// ── Display Results ────────────────────────────────────────
+function displayResults(customers) {
+    if (!customers || customers.length === 0) return;
+    const total = customers.length;
+    renderTabCounts();
+
+    const confirmed = customers.filter(c => c.status === 'confirmed').length;
+    const needsReview = customers.filter(c => c.status === 'needs_review').length;
+    const errors = customers.filter(c => c.status === 'error').length;
+
+    let aiSuccess = 0, aiTechFail = 0, totalConf = 0, confCount = 0;
+    customers.forEach(c => {
+        if (c.address?.ai_suggestion) {
+            if (c.address.ai_suggestion.error) aiTechFail++;
+            else { aiSuccess++; totalConf += c.address.ai_suggestion.confidence || 0; confCount++; }
+        }
+        (c.books || []).forEach(b => {
+            if (b.ai_suggestion) {
+                if (b.ai_suggestion.error) aiTechFail++;
+                else { aiSuccess++; totalConf += b.ai_suggestion.confidence || 0; confCount++; }
+            }
+        });
+    });
+    const avgConf = confCount > 0 ? Math.round(totalConf / confCount) : 0;
+
+    el('statTotal').textContent = total;
+    el('statConfirmed').textContent = confirmed;
+    el('statReview').textContent = needsReview;
+    el('statErrors').textContent = errors;
+    el('statAISuccess').textContent = aiSuccess;
+    el('statAIConf').textContent = avgConf + '%';
+    el('statsRow').style.display = 'grid';
+    el('resultsSection').style.display = 'block';
+    el('emptyState').style.display = 'none';
+
+    const visible = customers.filter(c => c.status === currentTab);
+    el('resultsCount').textContent = `تبويب "${TAB_LABELS[currentTab]}": ${visible.length}`;
+
+    const tbody = el('resultsBody');
+    tbody.innerHTML = '';
+    visible.forEach(customer => {
+        const row = document.createElement('tr');
+        row.dataset.customerId = customer._editId;
+        row.innerHTML = buildViewRow(customer);
+        tbody.appendChild(row);
+    });
+}
+
+function buildViewRow(customer) {
+    const addr = customer.address || {};
+    const addressStr = [addr.governorate, addr.city, addr.area, addr.street].filter(Boolean).map(esc).join('، ') || '-';
+    const addrSug = formatSuggestion(addr.ai_suggestion);
+
+    const booksHtml = (customer.books || []).map((book, bIdx) => {
+        const reviewClass = book.needs_review ? 'review' : '';
+        const sugHtml = formatSuggestion(book.ai_suggestion, customer._editId, bIdx);
+        const bookMeta = [esc(book.book_name), esc(book.grade), Number(book.price) > 0 ? esc(book.price) + ' جنيه' : '', book.quantity ? '×' + esc(book.quantity) : ''].filter(Boolean).join(' · ');
+        return `<div class="book-item ${reviewClass}">
+            <div>${bookMeta || '?'}</div>
+            ${sugHtml}
+        </div>`;
+    }).join('') || '-';
+
+    const tagHtml = parseReasons(customer.review_reasons).map(r => `<span class="reason-tag ${r.type}">${esc(r.text)}</span>`).join('');
+    const reasonsHtml = tagHtml || '<span style="color:#aaa;">—</span>';
+
+    const statusClass = customer.status === 'confirmed' ? 'confirmed'
+        : customer.status === 'needs_review' ? 'needs-review'
+        : customer.status === 'rejected' ? 'rejected' : 'error';
+
+    const total = codTotal(customer);
+    const isRejected = customer.status === 'rejected';
+    const rejectBtn = isRejected
+        ? `<button class="btn-icon" style="color:#7a5610;" onclick="openEdit(${customer._editId})">إعادة تسجيل</button>`
+        : `<button class="btn-icon" style="color:#8a5f1e;" onclick="rejectCustomer(${customer._editId})">رفض</button>`;
+
+    return `
+        <td><input type="checkbox" class="row-check" ${selectedCustomers.has(customer._editId) ? 'checked' : ''} onchange="toggleSelect(${customer._editId}, this.checked)"></td>
+        <td>${esc(customer.name) || '-'}</td>
+        <td>${esc(customer.phone1) || '-'}${customer.phone2 ? '<br>' + esc(customer.phone2) : ''}</td>
+        <td>${addressStr}${addrSug}</td>
+        <td>${booksHtml}</td>
+        <td style="white-space:nowrap;font-weight:700;">${total > 0 ? total + ' ج' : '-'}</td>
+        <td><span class="status ${statusClass}">${TAB_LABELS[customer.status] || customer.status}</span>${isRejected && customer.rejected_reason ? `<div class="rejected-reason">${esc(customer.rejected_reason)}</div>` : ''}</td>
+        <td style="max-width:280px;">${reasonsHtml}</td>
+        <td>
+            <div class="actions-cell">
+                <button class="btn-icon edit" onclick="openEdit(${customer._editId})">تعديل</button>
+                ${rejectBtn}
+                <button class="btn-icon delete" onclick="deleteCustomer(${customer._editId})">حذف</button>
+            </div>
+        </td>
+    `;
+}
+
+// Parse a plain review_reason string into a tagged chip.
+function parseReasons(reasons) {
+    const tags = [];
+    for (const raw of asArray(reasons)) {
+        const text = String(raw || '').trim();
+        if (!text) continue;
+        let type = 'warn';
+        if (/^Address:|^City:|^governorate:|^city:|not resolved/i.test(text)) type = 'geo';
+        else if (/not in catalog|not in the catalog/i.test(text)) type = 'catalog';
+        else if (/ambiguous|multiple stages|اختر المرحلة/i.test(text)) type = 'ambiguous';
+        else if (/phone1:|phone2:|تليفون/i.test(text)) type = 'phone';
+        else if (/missing|required|فارغ|مطلوب|empty/i.test(text)) type = 'missing';
+        else if (/book\(s\) need review|need review/i.test(text)) type = 'qty';
+        tags.push({ text, type });
+    }
+    return tags.length ? tags : [];
+}
+
+function formatSuggestion(sugg, customerId = -1, bIdx = -1) {
+    if (!sugg) return '';
+    if (sugg.type === 'ambiguous_stage') {
+        const opts = sugg.options || [];
+        if (opts.length === 0) return `<div class="suggestion info">${esc(sugg.suggestion || 'تحديد المرحلة')}</div>`;
+        const sel = `<select class="grade-select" onchange="handleGradeSelect(${customerId}, ${bIdx}, this.value)" style="margin-top:4px;padding:4px 8px;border:1px solid #d0d0d0;border-radius:4px;font-size:12px;">
+            <option value="">-- اختر المرحلة --</option>
+            ${opts.map((o, i) => `<option value="${i}">${esc(o.grade)} (${esc(o.price)} جنيه)</option>`).join('')}
+        </select>`;
+        return `<div class="suggestion info"><strong>اقتراح:</strong><br>${esc(sugg.suggestion)}${sel}</div>`;
+    }
+    if (sugg.error) return `<div class="suggestion danger">${esc(sugg.error)}</div>`;
+    if (!sugg.suggestion) return `<div class="suggestion warning">لا يوجد اقتراح موثوق</div>`;
+    const conf = typeof sugg.confidence === 'number' ? sugg.confidence : 0;
+    if (conf < 10) return `<div class="suggestion warning">اقتراح ضعيف (${conf}%)</div>`;
+    return `<div class="suggestion success">${esc(sugg.suggestion)} <span style="color:#666;">(${conf}%)</span></div>`;
+}
+
+// Resolve an ambiguous book stage suggestion by finding the row by id.
+async function handleGradeSelect(customerId, bIdx, optionIdx) {
+    const customer = (processedData || []).find(c => c._editId === customerId);
+    if (!customer || optionIdx === '') return;
+    const book = customer.books[bIdx];
+    const sugg = book.ai_suggestion;
+    if (!sugg?.options?.[optionIdx]) return;
+    const sel = sugg.options[optionIdx];
+    book.grade = sel.grade;
+    book.price = sel.price;
+    book.stage = sel.stage;
+    book.needs_review = false;
+    book.ai_suggestion = null;
+    book.status = 'ok';
+    customer.review_reasons = asArray(customer.review_reasons).filter(r => !r.includes(book.book_name));
+    if (customer.books.every(b => !b.needs_review)) customer.status = 'confirmed';
+    displayResults(processedData);
+    showToast(`تم الاختيار: ${esc(sel.grade)}`, 'success');
+
+    await fetch(`/api/customer/${customer._editId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ books: customer.books })
+    })
+        .then(() => syncFromServer())
+        .catch(err => showToast('فشل الحفظ: ' + err.message, 'error'));
+}
+
+// ── Edit Modal ─────────────────────────────────────────────
+async function openEdit(customerId) {
+    const customer = (processedData || []).find(c => c._editId === customerId);
+    if (!customer) return;
+
+    editingCustomerId = customerId;
+    editingRawText = customer.raw_text || '';
+
+    el('modalTitle').textContent = customer.status === 'needs_review' ? 'مراجعة و تصحيح الطلب'
+        : customer.status === 'rejected' ? 'إعادة تسجيل الطلب' : 'تعديل السجل';
+    el('modalMeta').textContent = `#${customer._editId} · ${TAB_LABELS[customer.status] || customer.status}`;
+
+    const reasons = asArray(customer.review_reasons);
+    if (customer.status === 'rejected') reasons.unshift('مرفوض: ' + (customer.rejected_reason || ''));
+    const reasonWrap = el('modalReason');
+    if (reasons.length) {
+        reasonWrap.hidden = false;
+        reasonWrap.innerHTML = parseReasons(reasons).map(r => `<span class="reason-tag ${r.type}">${esc(r.text)}</span>`).join('');
+    } else {
+        reasonWrap.hidden = true;
+    }
+
+    el('f-raw').value = customer.raw_text || '';
+    el('f-name').value = customer.name || '';
+    el('f-phone1').value = customer.phone1 || '';
+    el('f-phone2').value = customer.phone2 || '';
+    el('f-status').value = TAB_LABELS[customer.status] || customer.status;
+    el('f-remarks').value = customer.remarks || '';
+
+    const addr = customer.address || {};
+    await loadGovernorates();                       // populates f-governorate
+    await loadCityOptions(addr.governorate || '');
+    selectValue('f-governorate', addr.governorate || '');
+    selectValue('f-city', addr.city || '', addr.governorate || '');
+    el('f-area').value = addr.area || '';
+    el('f-street').value = addr.street || '';
+
+    renderBooksEditor(customer.books || []);
+
+    // Result box hidden, resend only makes sense when the text changed.
+    const resultBox = el('formResult');
+    resultBox.hidden = true;
+    resultBox.className = 'result-box';
+    resultBox.innerHTML = '';
+    el('resendBtn').hidden = true;
+
+    el('editModal').hidden = false;
+    await loadBookCatalog();
+}
+
+async function loadGovernorates() {
+    const sel = el('f-governorate');
+    sel.innerHTML = '<option value="">-- اختر --</option>';
+    if (govList.length) {
+        govList.forEach(g => {
+            const opt = document.createElement('option');
+            opt.value = g.name_ar;
+            opt.textContent = g.name_ar;
+            sel.appendChild(opt);
+        });
+        return;
+    }
+    try {
+        const res = await fetch('/api/geo/governorates');
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.governorates)) {
+            govList = data.governorates;
+            sel.innerHTML = '<option value="">-- اختر --</option>';
+            data.governorates.forEach(g => {
+                const opt = document.createElement('option');
+                opt.value = g.name_ar;
+                opt.textContent = g.name_ar;
+                sel.appendChild(opt);
+            });
+        }
+    } catch (err) {
+        console.error('loadGovernorates failed:', err);
+    }
+}
+
+async function loadCityOptions(govName) {
+    const sel = el('f-city');
+    sel.innerHTML = '<option value="">-- اختر --</option>';
+    if (!govName) return;
+    if (govCitiesCache[govName]) {
+        fillCitySelect(sel, govCitiesCache[govName]);
+        return;
+    }
+    try {
+        const res = await fetch('/api/geo/cities?governorate=' + encodeURIComponent(govName));
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.cities)) {
+            govCitiesCache[govName] = data.cities;
+            fillCitySelect(sel, data.cities);
+        }
+    } catch (err) {
+        console.error('loadCityOptions failed:', err);
+    }
+}
+
+function fillCitySelect(sel, cities) {
+    sel.innerHTML = '<option value="">-- اختر --</option>';
+    cities.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.name_ar;
+        opt.textContent = c.name_ar;
+        sel.appendChild(opt);
+    });
+}
+
+function selectValue(selId, value, govName) {
+    const sel = el(selId);
+    if (!value) { sel.value = ''; return; }
+    const present = Array.from(sel.options).some(o => o.value === value);
+    if (present) { sel.value = value; return; }
+    // Off-list stored value → keep it marked so a save doesn't silently drop it.
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = `${value} (غير مذكور في القائمة — سيتطلب مراجعة)`;
+    sel.appendChild(opt);
+    sel.value = value;
+}
+
+// ── Books editor ───────────────────────────────────────────
+function renderBooksEditor(books) {
+    const container = el('booksEditor');
+    container.innerHTML = '';
+    (books || []).forEach(b => addBookCard({
+        title: b.book_name || b.title || b.raw || '',
+        grade: b.grade || b.stage || '',
+        quantity: b.quantity || 1,
+        price: Number(b.price) > 0 ? b.price : (b.exceptional_unit_price || ''),
+        exceptional: !!(b.exceptional_unit_price != null && Number(b.exceptional_unit_price) > 0) || b.needs_review
+    }));
+    updateBooksCount();
+}
+
+function addBookCard({ title = '', grade = '', quantity = 1, price = '', exceptional = false } = {}) {
+    const container = el('booksEditor');
+    const card = document.createElement('div');
+    card.className = 'book-card';
+    card.innerHTML = `
+        <div class="book-card-fields">
+            <label class="edit-field book-title-field">
+                <span>اسم الكتاب</span>
+                <input type="text" class="book-title" value="${esc(title)}" autocomplete="off">
+            </label>
+            <label class="edit-field">
+                <span>المرحلة</span>
+                <input type="text" class="book-grade" value="${esc(grade)}" autocomplete="off">
+            </label>
+            <label class="edit-field">
+                <span>العدد</span>
+                <input type="number" class="book-copies" value="${quantity}" min="1" dir="ltr">
+            </label>
+            <label class="edit-field">
+                <span>السعر (جنيه)</span>
+                <input type="number" class="book-price" value="${esc(price)}" min="0" step="1" dir="ltr">
+            </label>
+        </div>
+        <div class="book-card-foot">
+            <label class="book-exc-toggle">
+                <input type="checkbox" class="book-exc-check" ${exceptional ? 'checked' : ''}>
+                خارج الكتالوج (سعر يدوي)
+            </label>
+            <button type="button" class="btn-book-del" onclick="removeBookCard(this)">حذف الكتاب</button>
+        </div>
+    `;
+    const priceInput = card.querySelector('.book-price');
+    const excCheck = card.querySelector('.book-exc-check');
+    excCheck.addEventListener('change', () => { updateModalTotal(); });
+    priceInput.addEventListener('input', () => { updateModalTotal(); });
+    container.appendChild(card);
+    updateBooksCount();
+    updateModalTotal();
+}
+
+function removeBookCard(btn) {
+    btn.closest('.book-card').remove();
+    updateBooksCount();
+    updateModalTotal();
+}
+
+function updateBooksCount() {
+    el('booksCount').textContent = document.querySelectorAll('#booksEditor .book-card').length;
+}
+
+function updateModalTotal() {
+    let total = 0;
+    document.querySelectorAll('#booksEditor .book-card').forEach(card => {
+        const copies = parseInt(card.querySelector('.book-copies').value) || 1;
+        const price = Number(card.querySelector('.book-price').value) || 0;
+        total += price * copies;
+    });
+    const wrap = el('modalTotal');
+    if (total > 0) {
+        wrap.hidden = false;
+        el('modalTotalVal').textContent = total;
+    } else {
+        wrap.hidden = true;
+    }
+}
+
+// ── Book catalog picker (add from list) ────────────────────
+async function loadBookCatalog() {
+    if (booksCatalog.length) return;
+    try {
+        const res = await fetch('/api/books/catalog');
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.books)) booksCatalog = data.books;
+    } catch (err) {
+        console.error('loadBookCatalog failed:', err);
+    }
+}
+
+function showCatalogPicker() {
+    el('catalogPicker').hidden = false;
+    const bookSel = el('catalog-book');
+    bookSel.innerHTML = '<option value="">-- اختر الكتاب --</option>';
+    booksCatalog.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.name;
+        opt.textContent = b.name;
+        bookSel.appendChild(opt);
+    });
+    el('catalog-stage').innerHTML = '<option value="">-- اختر المرحلة --</option>';
+    el('catalog-price').textContent = '—';
+    el('catalog-qty').value = 1;
+    el('catalog-add-btn').disabled = true;
+}
+
+function hideCatalogPicker() {
+    el('catalogPicker').hidden = true;
+}
+
+function getSelectedCatalogBook() {
+    const name = el('catalog-book').value;
+    return booksCatalog.find(b => b.name === name) || null;
+}
+
+function onCatalogBookChange() {
+    const book = getSelectedCatalogBook();
+    const stageSel = el('catalog-stage');
+    stageSel.innerHTML = '<option value="">-- اختر المرحلة --</option>';
+    el('catalog-price').textContent = '—';
+    if (!book) { el('catalog-add-btn').disabled = true; return; }
+    book.grades.forEach((grade, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = `${grade} — ${book.prices[i]} جنيه${book.stages[i] ? ' (' + book.stages[i] + ')' : ''}`;
+        stageSel.appendChild(opt);
+    });
+    if (book.grades.length === 1) { stageSel.value = '0'; onCatalogStageChange(); }
+    el('catalog-add-btn').disabled = book.grades.length === 0;
+}
+
+function onCatalogStageChange() {
+    const book = getSelectedCatalogBook();
+    const i = el('catalog-stage').value;
+    if (!book || i === '') { el('catalog-price').textContent = '—'; el('catalog-add-btn').disabled = true; return; }
+    const price = Number(book.prices[i]);
+    el('catalog-price').textContent = price + ' جنيه';
+    const qty = parseInt(el('catalog-qty').value) || 1;
+    if (qty > 1) el('catalog-price').textContent = price + ' × ' + qty + ' = ' + (price * qty) + ' جنيه';
+    el('catalog-add-btn').disabled = false;
+}
+
+function onCatalogQtyChange() {
+    onCatalogStageChange();
+}
+
+function addFromCatalog() {
+    const book = getSelectedCatalogBook();
+    const i = el('catalog-stage').value;
+    if (!book || i === '') return;
+    const grade = book.grades[i];
+    const price = Number(book.prices[i]);
+    const qty = parseInt(el('catalog-qty').value) || 1;
+    addBookCard({ title: book.name, grade, quantity: qty, price, exceptional: false });
+    hideCatalogPicker();
+    showToast(`تمت الإضافة: ${book.name} — ${grade}`, 'success');
+}
+
+function addManualBook() {
+    addBookCard({});
+    const cards = document.querySelectorAll('#booksEditor .book-card');
+    if (cards.length) cards[cards.length - 1].querySelector('.book-title').focus();
+}
+
+// ── Modal: Re-extract (حفظ وإعادة إرسال) ───────────────────
+async function resendEdit() {
+    if (!editingCustomerId) return;
+    const rawText = el('f-raw').value;
+    const btn = el('resendBtn');
+    const resultBox = el('formResult');
+    btn.disabled = true;
+    btn.textContent = 'جاري إعادة الاستخراج...';
+    resultBox.hidden = false;
+    resultBox.className = 'result-box';
+    resultBox.innerHTML = '';
+    try {
+        const res = await fetch(`/api/customer/${editingCustomerId}/re-extract`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ raw_text: rawText })
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        const p = data.preview || {};
+        editingRawText = rawText;
+        el('f-name').value = p.name || '';
+        el('f-phone1').value = p.phone1 || '';
+        el('f-phone2').value = p.phone2 || '';
+        el('f-remarks').value = p.remarks || '';
+        const addr = p.address || {};
+        selectValue('f-governorate', addr.governorate || '');
+        await loadCityOptions(addr.governorate || '');
+        selectValue('f-city', addr.city || '', addr.governorate || '');
+        el('f-area').value = addr.area || '';
+        el('f-street').value = addr.street || '';
+        renderBooksEditor(p.books || []);
+
+        const needsReview = p.status === 'needs_review';
+        const errs = asArray(p.review_reasons).slice(0, 3).join('؛ ');
+        resultBox.classList.add('banner', needsReview ? 'warning' : 'success');
+        resultBox.innerHTML = `<strong>${needsReview ? 'تم إعادة الاستخراج — راجع البيانات أدناه ثم احفظ' : 'تم إعادة الاستخراج — البيانات جاهزة للحفظ'}</strong><br>${esc(errs || 'استخراج جديد من النص المعدّل جاهز.')}`;
+    } catch (err) {
+        resultBox.classList.add('banner', 'error');
+        resultBox.innerHTML = `فشلت إعادة الاستخراج: ${esc(err.message)}`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'حفظ وإعادة إرسال';
+    }
+}
+
+// ── Modal: Save (resolve) ──────────────────────────────────
+async function saveCustomer(e) {
+    e.preventDefault();
+    if (!editingCustomerId) return;
+    const id = editingCustomerId;
+    const resultBox = el('formResult');
+    resultBox.hidden = false;
+
+    const books = [];
+    document.querySelectorAll('#booksEditor .book-card').forEach(card => {
+        const title = card.querySelector('.book-title').value.trim();
+        if (!title) return;
+        const quantity = parseInt(card.querySelector('.book-copies').value) || 1;
+        const price = Number(card.querySelector('.book-price').value) || 0;
+        const exc = card.querySelector('.book-exc-check').checked;
+        books.push({
+            book_name: title,
+            grade: card.querySelector('.book-grade').value.trim() || null,
+            quantity,
+            price: price > 0 ? price : null,
+            status: exc ? 'unknown' : 'ok',
+            exceptional_unit_price: exc && price > 0 ? price : null,
+            review_reason: '',
+            ai_suggestion: null
+        });
+    });
+
+    // A book without any price is an invalid payload the server will reject —
+    // surface it here instead of a confusing failure.
+    const priceLess = books.filter(b => !(Number(b.price) > 0));
+    if (priceLess.length) {
+        resultBox.className = 'result-box banner error';
+        resultBox.innerHTML = `<strong>كتب بدون سعر.</strong><br>حدد سعرًا لكل كتاب قبل الحفظ:<br>${priceLess.map(b => `• ${esc(b.book_name || '(كتاب غير معروف)')}`).join('<br>')}`;
+        return;
+    }
+
+    const payload = {
+        raw_text: el('f-raw').value,
+        name: el('f-name').value.trim(),
+        phone1: el('f-phone1').value.trim(),
+        phone2: el('f-phone2').value.trim() || null,
+        remarks: el('f-remarks').value.trim() || null,
+        address: {
+            governorate: el('f-governorate').value,
+            city: el('f-city').value,
+            area: el('f-area').value.trim(),
+            street: el('f-street').value.trim()
+        },
+        books
+    };
+
+    el('saveBtn').disabled = true;
+    resultBox.className = 'result-box';
+    try {
+        const res = await fetch(`/api/customer/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        if (data.customer.status === 'needs_review') {
+            resultBox.classList.add('banner', 'warning');
+            resultBox.innerHTML = `تم الحفظ — لا يزال يحتاج مراجعة.<br>${esc(asArray(data.customer.review_reasons).join('؛ ') || '')}`;
+        } else {
+            resultBox.classList.add('banner', 'success');
+            resultBox.innerHTML = `تم التسجيل بنجاح — الإجمالي: ${codTotal(data.customer)} جنيه`;
+            setTimeout(() => { closeModal(); syncFromServer(); }, 900);
+        }
+    } catch (err) {
+        resultBox.classList.add('banner', 'error');
+        resultBox.innerHTML = `فشل الحفظ: ${esc(err.message)}`;
+    } finally {
+        el('saveBtn').disabled = false;
+    }
+}
+
+function closeModal() {
+    editingCustomerId = null;
+    el('editModal').hidden = true;
+}
+
+async function rejectCustomer(customerId) {
+    const id = customerId || editingCustomerId;
+    if (id == null) return;
+    const reason = customerId == null ? 'مرفوض يدويًا' : prompt('سبب الرفض:', '');
+    if (customerId != null && reason === null) return;
+    try {
+        const res = await fetch(`/api/customer/${id}/reject`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason })
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'فشل الرفض');
+        if (id === editingCustomerId) closeModal();
+        showToast('تم رفض الطلب', 'success');
+        await syncFromServer();
+    } catch (err) {
+        showToast('فشل الرفض: ' + err.message, 'error');
+    }
+}
+
+async function deleteFromModal() {
+    if (!editingCustomerId) return;
+    if (!confirm('حذف هذا السجل نهائيًا — لا يمكن التراجع!')) return;
+    try {
+        const res = await fetch(`/api/customer/${editingCustomerId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'فشل الحذف');
+        closeModal();
+        await syncFromServer();
+        showToast('تم الحذف', 'success');
+    } catch (err) {
+        showToast('فشل الحذف: ' + err.message, 'error');
+    }
+}
+
+// ── Bulk operations ────────────────────────────────────────
+function toggleSelect(customerId, checked) {
+    if (checked) selectedCustomers.add(customerId);
+    else selectedCustomers.delete(customerId);
+    updateBulkBar();
+}
+
+function toggleAll(checkbox) {
+    selectedCustomers.clear();
+    if (checkbox.checked) {
+        (processedData || []).filter(c => c.status === currentTab).forEach(c => selectedCustomers.add(c._editId));
+    }
+    updateBulkBar();
+    displayResults(processedData);
+}
+
+function updateBulkBar() {
+    const count = selectedCustomers.size;
+    el('bulkBar').style.display = count > 0 ? 'flex' : 'none';
+    el('bulkCount').textContent = `تم تحديد ${count} ${count === 1 ? 'عميل' : 'عملاء'}`;
+    el('bulkDeleteBtn').textContent = `حذف المحدد (${count})`;
+}
+
+function deselectAll() {
+    selectedCustomers.clear();
+    resetSelectAllCheckbox();
+    displayResults(processedData);
+    updateBulkBar();
+}
+
+async function deleteSelected() {
+    if (selectedCustomers.size === 0) { showToast('الرجاء اختيار عملاء', 'error'); return; }
+    if (!confirm(`حذف ${selectedCustomers.size} عميل نهائيًا؟`)) return;
+    try {
+        const response = await fetch('/api/customers/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: [...selectedCustomers] })
+        });
+        const data = await response.json();
+        if (!data.ok) throw new Error(data.error || 'فشل الحذف');
+        selectedCustomers.clear();
+        resetSelectAllCheckbox();
+        await syncFromServer();
+        updateBulkBar();
+        showToast('تم الحذف', 'success');
+    } catch (err) {
+        showToast('فشل الحذف: ' + err.message, 'error');
+    }
+}
+
+async function deleteCustomer(customerId) {
+    if (!confirm('حذف هذا العميل نهائيًا؟')) return;
+    try {
+        const response = await fetch(`/api/customer/${customerId}`, { method: 'DELETE' });
+        const data = await response.json();
+        if (!data.ok) throw new Error(data.error || 'فشل الحذف');
+        selectedCustomers.delete(customerId);
+        await syncFromServer();
+        updateBulkBar();
+        showToast('تم الحذف', 'success');
+    } catch (err) {
+        showToast('فشل الحذف: ' + err.message, 'error');
+    }
+}
+
+async function deleteAll() {
+    if (!confirm('حذف جميع العملاء نهائيًا؟')) return;
+    try {
+        const res = await fetch('/api/customers/delete-all', { method: 'POST' });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'فشل الحذف');
+        selectedCustomers.clear();
+        editingCustomerId = null;
+        await syncFromServer();
+        updateBulkBar();
+        showToast('تم حذف جميع البيانات', 'success');
+    } catch (err) {
+        showToast('فشل الحذف: ' + err.message, 'error');
+    }
+}
+
+// ── Edit/export/clear helpers ──────────────────────────────
+async function clearData() {
+    processedData = null;
+    editingCustomerId = null;
+    selectedCustomers.clear();
+    resetSelectAllCheckbox();
+    el('resultsSection').style.display = 'none';
+    el('statsRow').style.display = 'none';
+    el('tabsRow').style.display = 'none';
+    el('emptyState').style.display = 'block';
+    el('emptyState').innerHTML = '<p>أدخل نص الأوردر واضغط "معالجة" للبدء</p>';
+    enableControls(false);
+    el('savedIndicator').textContent = '';
+    el('orderInput').value = '';
+    updateBulkBar();
+    try {
+        await fetch('/api/state', { method: 'DELETE' });
+        await syncFromServer();
+    } catch (err) {
+        console.log('State clear failed');
+    }
+}
+
+async function exportToExcel() {
+    const btn = el('exportBtn');
+    btn.disabled = true;
+    btn.textContent = 'جارٍ التحميل...';
+    try {
+        const response = await fetch('/api/export', { cache: 'no-store' });
+        if (!response.ok) throw new Error('Export failed');
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'orders.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+        showToast('تم تحميل الملف', 'success');
+    } catch (err) {
+        showToast('فشل التصدير: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'تصدير Excel';
+    }
+}
+
+function showToast(msg, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = msg;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+// ── Init ───────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    el('f-governorate').addEventListener('change', () => {
+        loadCityOptions(el('f-governorate').value).then(() => { el('f-city').value = ''; });
+    });
+
+    el('f-raw').addEventListener('input', () => {
+        const btn = el('resendBtn');
+        btn.hidden = (el('f-raw').value || '') === editingRawText;
+    });
+
+    el('editModal').addEventListener('click', e => {
+        if (e.target === el('editModal')) closeModal();
+    });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+    el('orderInput').addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); processOrders(); }
+    });
+    el('orderInput').focus();
+
+    loadState();
+});
+</script>
+</body>
+</html>
