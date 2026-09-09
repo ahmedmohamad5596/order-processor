@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "packages": {
+    "python": "3.11"
+  },
+  "steps": {
+    "install": {
+      "commands": [
+        "...",
+        "python3 -m pip install -r requirements.txt"
+      ]
+    }
+  },
+  "deploy": {
+    "startCommand": "npm start"
+  }
+}
