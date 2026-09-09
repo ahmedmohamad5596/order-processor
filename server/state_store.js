@@ -1,26 +1,35 @@
-/**
- * State Store - Task 18
- * 
- * JSON file-based persistence for processed customer data.
- * Auto-saves after each successful processing run.
- * Auto-loads on server start and API requests.
- */
+const { Pool } = require('pg');
 
-const fs = require('fs');
-const path = require('path');
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000
+});
 
-const STATE_FILE = path.join(__dirname, '..', 'state.json');
+let initialized = false;
 
-/**
- * Load current state from file.
- * @returns {object} State object with customers array and metadata
- */
-function loadState() {
+async function initDatabase() {
+    if (initialized) return;
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS app_state (
+            key TEXT PRIMARY KEY DEFAULT 'main',
+            data JSONB NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    initialized = true;
+    console.log('[StateStore] PostgreSQL table ready');
+}
+
+async function loadState() {
     try {
-        if (fs.existsSync(STATE_FILE)) {
-            const data = fs.readFileSync(STATE_FILE, 'utf8');
-            const state = JSON.parse(data);
-            return state;
+        const { rows } = await pool.query(
+            "SELECT data FROM app_state WHERE key = 'main'"
+        );
+        if (rows.length > 0 && rows[0].data) {
+            return rows[0].data;
         }
     } catch (error) {
         console.error('[StateStore] Error loading state:', error.message);
@@ -28,15 +37,14 @@ function loadState() {
     return { customers: [], savedAt: null };
 }
 
-/**
- * Save state to file.
- * @param {object} state - State object to save
- * @returns {object} Save result with success status
- */
-function saveState(state) {
+async function saveState(state) {
     try {
-        const data = JSON.stringify(state, null, 2);
-        fs.writeFileSync(STATE_FILE, data, 'utf8');
+        await pool.query(
+            `INSERT INTO app_state (key, data, updated_at)
+             VALUES ('main', $1, NOW())
+             ON CONFLICT (key) DO UPDATE SET data = $2, updated_at = NOW()`,
+            [state, state]
+        );
         return { success: true, savedAt: new Date().toISOString() };
     } catch (error) {
         console.error('[StateStore] Error saving state:', error.message);
@@ -44,15 +52,9 @@ function saveState(state) {
     }
 }
 
-/**
- * Delete state file.
- * @returns {boolean} True if deleted or didn't exist
- */
-function clearState() {
+async function clearState() {
     try {
-        if (fs.existsSync(STATE_FILE)) {
-            fs.unlinkSync(STATE_FILE);
-        }
+        await pool.query("DELETE FROM app_state WHERE key = 'main'");
         return true;
     } catch (error) {
         console.error('[StateStore] Error clearing state:', error.message);
@@ -60,12 +62,12 @@ function clearState() {
     }
 }
 
-/**
- * Get initial state for frontend.
- * @returns {object} State with loaded data
- */
 function getInitial() {
-    return loadState();
+    return { customers: [], savedAt: null };
 }
 
-module.exports = { loadState, saveState, clearState, getInitial };
+function getPool() {
+    return pool;
+}
+
+module.exports = { initDatabase, loadState, saveState, clearState, getInitial, getPool };

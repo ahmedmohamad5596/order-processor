@@ -34,7 +34,7 @@ const { validatePhone } = require('./phone_validator');
 const { getGovernorates, getCitiesForGovernorate, canonicalizeCity } = require('./geo_reference');
 const { getBookCatalog } = require('./book_catalog');
 const { writeToExcel } = require('./excel_writer');
-const { loadState, saveState, clearState } = require('./state_store');
+const { initDatabase, loadState, saveState, clearState, getPool } = require('./state_store');
 const { logger, LEVELS } = require('./logger');
 
 // AI provider key — generic first, OpenRouter kept as a backwards-compatible
@@ -125,7 +125,8 @@ app.get('/health', (req, res) => {
     });
 });
 
-app.get('/api/metrics', (req, res) => {
+app.get('/api/metrics', async (req, res) => {
+    const state = await loadState();
     res.json({
         ok: true,
         metrics: {
@@ -138,8 +139,8 @@ app.get('/api/metrics', (req, res) => {
                 : '0%'
         },
         state: {
-            hasSavedData: fs.existsSync(path.join(__dirname, '..', 'state.json')),
-            lastSaved: loadState().savedAt
+            hasSavedData: Array.isArray(state.customers) && state.customers.length > 0,
+            lastSaved: state.savedAt
         }
     });
 });
@@ -212,13 +213,13 @@ app.post('/api/process', async (req, res) => {
 
         // Auto-save to state store — MERGE with existing customers so a new
         // batch never wipes previously saved orders (dedupe by _editId).
-        const currentState = loadState();
+        const currentState = await loadState();
         const currentCustomers = Array.isArray(currentState.customers) ? currentState.customers : [];
         const byEditId = new Map(currentCustomers.map(c => [c._editId, c]));
         for (const r of results) {
             byEditId.set(r._editId, r);
         }
-        const saveResult = saveState({
+        const saveResult = await saveState({
             customers: Array.from(byEditId.values()),
             stats: stats,
             savedAt: new Date().toISOString()
@@ -271,7 +272,7 @@ app.post('/api/process', async (req, res) => {
 // so deleted/edited orders can't leak into the exported file.
 // GET (like the legacy system: /api/orders/export/excel) and POST both work.
 app.all('/api/export', async (req, res) => {
-    const state = loadState();
+    const state = await loadState();
     // Rejected orders are excluded — they must never ship to the courier.
     const customers = (state.customers || []).filter(c => c && c.name && c.status !== 'rejected');
 
@@ -311,22 +312,22 @@ app.all('/api/export', async (req, res) => {
 });
 
 // State management endpoints (Task 18)
-app.get('/api/state', (req, res) => {
-    const state = loadState();
+app.get('/api/state', async (req, res) => {
+    const state = await loadState();
     res.json({ ok: true, state });
 });
 
-app.post('/api/save', (req, res) => {
+app.post('/api/save', async (req, res) => {
     const { customers } = req.body;
     if (!customers || !Array.isArray(customers)) {
         return res.status(400).json({ ok: false, error: 'No customers data' });
     }
-    const result = saveState({ customers, savedAt: new Date().toISOString() });
+    const result = await saveState({ customers, savedAt: new Date().toISOString() });
     res.json(result);
 });
 
-app.delete('/api/state', (req, res) => {
-    clearState();
+app.delete('/api/state', async (req, res) => {
+    await clearState();
     res.json({ ok: true, message: 'State cleared' });
 });
 
@@ -376,7 +377,7 @@ app.put('/api/customer/:id', async (req, res) => {
         return res.status(400).json({ ok: false, error: 'Invalid customer ID' });
     }
     
-    const state = loadState();
+    const state = await loadState();
     const idx = state.customers.findIndex(c => c._editId === customerId);
     
     if (idx === -1) {
@@ -460,7 +461,7 @@ app.put('/api/customer/:id', async (req, res) => {
 
     recomputeStatus(customer, cityErrors);
 
-    const saveResult = saveState(state);
+    const saveResult = await saveState(state);
     if (!saveResult.success) {
         return res.status(500).json({ ok: false, error: 'Failed to save changes' });
     }
@@ -474,7 +475,7 @@ app.put('/api/customer/:id', async (req, res) => {
 // Port of the old system's /re-extract ("حفظ وإعادة إرسال").
 app.post('/api/customer/:id/re-extract', async (req, res) => {
     const customerId = parseInt(req.params.id);
-    const state = loadState();
+    const state = await loadState();
     const customer = state.customers.find(c => c._editId === customerId);
 
     if (!customer) return res.status(404).json({ ok: false, error: 'Customer not found' });
@@ -497,9 +498,9 @@ app.post('/api/customer/:id/re-extract', async (req, res) => {
 
 // POST /api/customer/:id/reject — move to 'rejected' (kept as audit, excluded
 // from export). Port of the old system's PATCH /:id/reject.
-app.post('/api/customer/:id/reject', (req, res) => {
+app.post('/api/customer/:id/reject', async (req, res) => {
     const customerId = parseInt(req.params.id);
-    const state = loadState();
+    const state = await loadState();
     const idx = state.customers.findIndex(c => c._editId === customerId);
 
     if (idx === -1) return res.status(404).json({ ok: false, error: 'Customer not found' });
@@ -508,7 +509,7 @@ app.post('/api/customer/:id/reject', (req, res) => {
     customer.status = 'rejected';
     customer.rejected_reason = (req.body && req.body.reason) ? String(req.body.reason).trim() : 'مرفوض يدويًا';
 
-    const saveResult = saveState(state);
+    const saveResult = await saveState(state);
     if (!saveResult.success) {
         return res.status(500).json({ ok: false, error: 'Failed to save changes' });
     }
@@ -518,14 +519,14 @@ app.post('/api/customer/:id/reject', (req, res) => {
 });
 
 // DELETE /api/customer/:id - Delete a single customer
-app.delete('/api/customer/:id', (req, res) => {
+app.delete('/api/customer/:id', async (req, res) => {
     const customerId = parseInt(req.params.id);
     
     if (isNaN(customerId)) {
         return res.status(400).json({ ok: false, error: 'Invalid customer ID' });
     }
     
-    const state = loadState();
+    const state = await loadState();
     const customerIndex = state.customers.findIndex(c => c._editId === customerId);
     
     if (customerIndex === -1) {
@@ -533,7 +534,7 @@ app.delete('/api/customer/:id', (req, res) => {
     }
     
     state.customers.splice(customerIndex, 1);
-    const saveResult = saveState(state);
+    const saveResult = await saveState(state);
     
     if (!saveResult.success) {
         return res.status(500).json({ ok: false, error: 'Failed to delete customer' });
@@ -544,20 +545,20 @@ app.delete('/api/customer/:id', (req, res) => {
 });
 
 // POST /api/customers/delete - Bulk delete customers
-app.post('/api/customers/delete', (req, res) => {
+app.post('/api/customers/delete', async (req, res) => {
     const { ids } = req.body;
     
     if (!Array.isArray(ids) || ids.length === 0) {
         return res.status(400).json({ ok: false, error: 'No customer IDs provided' });
     }
     
-    const state = loadState();
+    const state = await loadState();
     const idSet = new Set(ids.map(id => parseInt(id)));
     
     // Filter out deleted customers
     state.customers = state.customers.filter(c => !idSet.has(c._editId));
     
-    const saveResult = saveState(state);
+    const saveResult = await saveState(state);
     
     if (!saveResult.success) {
         return res.status(500).json({ ok: false, error: 'Failed to delete customers' });
@@ -568,9 +569,9 @@ app.post('/api/customers/delete', (req, res) => {
 });
 
 // POST /api/customers/delete-all - Delete all customers
-app.post('/api/customers/delete-all', (req, res) => {
+app.post('/api/customers/delete-all', async (req, res) => {
     const state = { customers: [], savedAt: new Date().toISOString() };
-    const saveResult = saveState(state);
+    const saveResult = await saveState(state);
     
     if (!saveResult.success) {
         return res.status(500).json({ ok: false, error: 'Failed to clear all data' });
@@ -621,19 +622,40 @@ app.get('/api/models', (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
-    logger.info('Server started', { port: PORT });
-    console.log(`Server running on http://localhost:${PORT}`);
-    console.log(`API endpoints:`);
-    console.log(`  GET    /health`);
-    console.log(`  GET    /api/metrics`);
-    console.log(`  GET    /api/logs`);
-    console.log(`  POST   /api/process`);
-    console.log(`  POST   /api/export`);
-    console.log(`  GET    /api/state`);
-    console.log(`  POST   /api/save`);
-    console.log(`  DELETE /api/state`);
-    console.log(`  GET    /api/models`);
-});
+async function start() {
+    try {
+        await initDatabase();
+    } catch (err) {
+        logger.error('Database init failed', { error: err.message });
+        console.error('[db] Failed to connect to PostgreSQL:', err.message);
+        process.exit(1);
+    }
+
+    app.listen(PORT, () => {
+        logger.info('Server started', { port: PORT });
+        console.log(`Server running on http://localhost:${PORT}`);
+        console.log(`API endpoints:`);
+        console.log(`  GET    /health`);
+        console.log(`  GET    /api/metrics`);
+        console.log(`  GET    /api/logs`);
+        console.log(`  POST   /api/process`);
+        console.log(`  POST   /api/export`);
+        console.log(`  GET    /api/state`);
+        console.log(`  POST   /api/save`);
+        console.log(`  DELETE /api/state`);
+        console.log(`  GET    /api/models`);
+    });
+}
+
+start();
+
+function gracefulShutdown(signal) {
+    logger.info(`${signal} received — draining database pool`);
+    getPool().end()
+        .catch(err => console.error('pool.end failed:', err.message))
+        .finally(() => process.exit(0));
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 module.exports = app;
