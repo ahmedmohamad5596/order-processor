@@ -15,7 +15,12 @@ from typing import Any
 
 from rapidfuzz import fuzz
 
-from engine.config import FUZZY_HIGH, FUZZY_LOW
+from engine.config import (
+    AREA_ENTITY_TYPES,
+    EVIDENCE_MARGIN,
+    FUZZY_HIGH,
+    FUZZY_LOW,
+)
 from engine.normalizer import normalize_input, normalize_lookup_key
 from engine.models import AddressResult, MatchCandidate, MatchType, FieldStatus
 from engine.ambiguity import detect_and_resolve
@@ -26,6 +31,14 @@ logger = logging.getLogger(__name__)
 _SEPARATORS = ["،", ",", "/", "-", "–", "—"]
 # Additional separators for unformatted addresses (used as fallback)
 _EXTRA_SEPARATORS = [".", " "]
+
+# Area-level specificity for evidence scoring: when an address names several
+# real entities ("التجمع الخامس كمبوند ريتاج"), the most specific one is the
+# area-level entity it denotes — a compound/village inside a district.
+_AREA_SPECIFICITY = {
+    "compound": 3, "village": 3, "community": 3,
+    "district": 2, "neighborhood": 2, "area": 1,
+}
 
 
 def _split_tokens(text: str) -> list[str]:
@@ -87,6 +100,18 @@ def _fuzzy_score(input_text: str, candidate: str) -> float:
     return fuzz.token_sort_ratio(input_text, candidate)
 
 
+def _decisive_scores(scores: list[float]) -> bool:
+    """True when the top candidate wins by more than the evidence margin.
+
+    Evidence scoring (fix2 §6): scores like 82 vs 81 do NOT mean the top
+    candidate resolved — the field is ambiguous because the margin is too
+    small, and a false positive is worse than no result.
+    """
+    if len(scores) <= 1:
+        return True
+    return (scores[0] - scores[1]) > EVIDENCE_MARGIN
+
+
 def _reverse_from_city(
     tokens: list[str],
     city_to_gov: dict,
@@ -141,17 +166,22 @@ def _reverse_from_city(
 
 def _find_governorate_fuzzy(
     tokens: list[str], gov_lookup: dict, city_to_gov: dict
-) -> MatchCandidate | None:
+) -> tuple[MatchCandidate | None, str | None]:
     """Fuzzy governorate match — the LAST resolution layer only.
 
     Runs only after exact governorate AND reverse city→governorate layers
     failed. City tokens are excluded so a known city name (المنصورة) can never
     be fuzzy-matched against a governorate (المنوفية).
+
+    Evidence-based (fix2 §6): when the top two governorates score within
+    EVIDENCE_MARGIN, the field is ambiguous — no value is forced.
+    Returns (candidate, review_reason); only one is non-None.
     """
     city_known = set(city_to_gov.keys())
-    best: MatchCandidate | None = None
+    per_gov: dict[str, MatchCandidate] = {}
 
     for norm_name, info in gov_lookup.items():
+        top: MatchCandidate | None = None
         for token in tokens:
             norm_input = normalize_input(token)
             if norm_input in city_known:
@@ -164,10 +194,22 @@ def _find_governorate_fuzzy(
                     score=score,
                     match_type=MatchType.FUZZY,
                 )
-                if best is None or cand.score > best.score:
-                    best = cand
+                if top is None or cand.score > top.score:
+                    top = cand
+        if top is not None:
+            per_gov[norm_name] = top
 
-    return best
+    if not per_gov:
+        return None, None
+
+    ranked = sorted(per_gov.values(), key=lambda c: c.score, reverse=True)
+    if not _decisive_scores([c.score for c in ranked]):
+        names = ", ".join(c.name for c in ranked[:2])
+        return None, (
+            f"Governorate ambiguous: '{names}' evidence too close — "
+            f"needs manual selection"
+        )
+    return ranked[0], None
 
 
 def _find_governorate(
@@ -260,7 +302,7 @@ def _find_governorate(
         return gov, review
 
     # ── Layer 7: fuzzy governorate — LAST LAYER ONLY ──
-    return _find_governorate_fuzzy(tokens, gov_lookup, city_to_gov), None
+    return _find_governorate_fuzzy(tokens, gov_lookup, city_to_gov)
 
 
 def _token_variants(token: str) -> list[str]:
@@ -432,10 +474,18 @@ def _find_area(
     gov_id: str,
     city_id: str | None,
     area_lookup: dict,
-) -> MatchCandidate | None:
-    """Find area match from the learned areas table."""
+) -> tuple[MatchCandidate | None, str | None]:
+    """Find area match from the areas reference.
+
+    Only area-level entity types can confirm an area (fix2 §7): a road or
+    street (جسر السويس، شارع الهرم، ...) spans multiple neighborhoods and is
+    never an area by itself. Confidence is evidence-based (fix2 §6): when the
+    two best area candidates score within EVIDENCE_MARGIN, no area is forced.
+
+    Returns (candidate, ambiguous_reason); only one is non-None.
+    """
     if not area_lookup:
-        return None
+        return None, None
 
     search_texts = list(set(tokens + [full_text]))
     # Add consecutive-token pairs so multi-word areas ("جسر السويس",
@@ -452,28 +502,32 @@ def _find_area(
             if " " not in tokens[i + 1]
         ]
     search_texts = list(dict.fromkeys(search_texts))
-    best: MatchCandidate | None = None
+    candidates: dict[str, MatchCandidate] = {}
 
     for norm_name, info in area_lookup.items():
+        # Roads/streets span areas — they never confirm an area by themselves.
+        if info.get("entity_type", "area") not in AREA_ENTITY_TYPES:
+            continue
         # Filter by governorate (and city if known)
         if info.get("governorate_id") != gov_id:
             continue
         if city_id and info.get("city_id") != city_id:
             continue
 
-        # The candidate carries the parent city id (learned areas store it as
-        # city_id; there is no separate area_id).
+        # The candidate carries the parent city id (areas store it as city_id).
         parent_city_id = info.get("city_id") or info.get("area_id")
 
         for text in search_texts:
             norm_input = normalize_input(text)
             if norm_input == norm_name:
-                return MatchCandidate(
+                candidates[norm_name] = MatchCandidate(
                     name=info.get("area_name", norm_name),
                     id=parent_city_id,
                     score=100.0,
                     match_type=MatchType.EXACT,
+                    source=info.get("entity_type", "area"),
                 )
+                break
             score = _fuzzy_score(norm_input, norm_name)
             if score >= FUZZY_HIGH:
                 cand = MatchCandidate(
@@ -481,11 +535,34 @@ def _find_area(
                     id=parent_city_id,
                     score=score,
                     match_type=MatchType.FUZZY,
+                    source=info.get("entity_type", "area"),
                 )
-                if best is None or cand.score > best.score:
-                    best = cand
+                if norm_name not in candidates or cand.score > candidates[norm_name].score:
+                    candidates[norm_name] = cand
 
-    return best
+    if not candidates:
+        return None, None
+
+    ranked = sorted(candidates.values(), key=lambda c: c.score, reverse=True)
+
+    # Evidence: exact entities always beat fuzzy ones.
+    exact = [c for c in ranked if c.score >= 100.0]
+    pool = exact if exact else ranked
+
+    # Evidence: at equal strength the most specific entity type wins — a
+    # compound/village inside a district is the entity the address names
+    # ("التجمع الخامس كمبوند ريتاج" → ريتاج, not التجمع الخامس).
+    max_spec = max(_AREA_SPECIFICITY.get(c.source, 0) for c in pool)
+    pool = [c for c in pool if _AREA_SPECIFICITY.get(c.source, 0) == max_spec]
+
+    pool = sorted(pool, key=lambda c: c.score, reverse=True)
+    if not _decisive_scores([c.score for c in pool]):
+        names = ", ".join(c.name for c in pool[:2])
+        return None, (
+            f"Area ambiguous: '{names}' evidence too close — "
+            f"select the area manually"
+        )
+    return pool[0], None
 
 
 def _city_id_key(city_id: str, city_lookup: dict) -> str | None:
@@ -650,12 +727,14 @@ def match_address(
                             matched_tokens.add(t)
 
     # ── Step 3: Area matching ───────────────────────────────
-    area = _find_area(
+    area, area_note = _find_area(
         tokens, raw_text, gov_id,
         result.city_id if result.city_status == FieldStatus.CONFIRMED else None,
         area_lookup,
     )
-    if area is not None:
+    if area_note:
+        result.flag_area_review(area_note)
+    elif area is not None:
         if area.score >= FUZZY_HIGH:
             result.set_area(area.name, area.match_type, area.score)
             area_norm = normalize_input(area.name)
@@ -702,9 +781,12 @@ def _assemble(
     if (result.governorate_status == FieldStatus.CONFIRMED
             and result.city_status == FieldStatus.CONFIRMED
             and result.area_status != FieldStatus.CONFIRMED):
-        result.flag_area_review(
-            f"Area not mentioned for city {result.city} — select the area manually"
-        )
+        if result.review_reason is None:
+            # Keep a more specific area reason if already flagged (e.g. an
+            # evidence-margin ambiguity) — Rule 2 is only the generic fallback.
+            result.flag_area_review(
+                f"Area not mentioned for city {result.city} — select the area manually"
+            )
         result.street = _build_street(tokens, matched_tokens)
         return
 

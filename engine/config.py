@@ -18,6 +18,17 @@ FUZZY_HIGH = 90   # auto-confirm, high confidence
 FUZZY_LOW = 75    # auto-confirm, log for periodic review
 # below FUZZY_LOW = match failure, needs_review
 
+# ── Evidence Scoring (fix2 §6) ─────────────────────────────
+# When the top two candidates are this close, neither is supported strongly
+# enough by the geographic evidence to win — the value is ambiguous.
+EVIDENCE_MARGIN = 5
+
+# Entity types that can confirm an area (fix2 §7). A road/street spans
+# neighborhoods and is never an area by itself.
+AREA_ENTITY_TYPES = {
+    "area", "district", "neighborhood", "compound", "village", "community",
+}
+
 # ── Book Matching Thresholds (stricter than address) ────────
 FUZZY_BOOK_HIGH = 90   # auto-confirm book name
 FUZZY_BOOK_LOW = 75    # auto-confirm + log for periodic review
