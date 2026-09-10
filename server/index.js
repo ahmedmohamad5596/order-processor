@@ -106,7 +106,9 @@ app.use(express.static(path.join(__dirname, '../public'), {
     // index.html (and JS) are updated from the server side; the browser must always
     // get the current version or the frontend keeps stale delete/export behavior.
     setHeaders(res, filePath) {
-        if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        // The dashboard (HTML/CSS/JS) changes on deploy; the browser must always
+        // fetch the current version or it keeps serving a stale stylesheet/layout.
+        if (/\.html$|\.css$|\.js$/.test(filePath)) res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     }
 }));
 
