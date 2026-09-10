@@ -170,15 +170,24 @@
             <div class="edit-grid">
                 <label class="edit-field">
                     <span>المحافظة</span>
-                    <select id="f-governorate"><option value="">-- اختر --</option></select>
+                    <div class="geo-ac">
+                        <input type="text" id="f-governorate" placeholder="ابحث أو اكتب مباشرة" autocomplete="off">
+                        <ul class="ga-list" id="ga-gov-list"></ul>
+                    </div>
                 </label>
                 <label class="edit-field">
                     <span>المدينة</span>
-                    <select id="f-city"><option value="">-- اختر --</option></select>
+                    <div class="geo-ac">
+                        <input type="text" id="f-city" placeholder="ابحث أو اكتب مباشرة" autocomplete="off">
+                        <ul class="ga-list" id="ga-city-list"></ul>
+                    </div>
                 </label>
                 <label class="edit-field">
                     <span>المنطقة</span>
-                    <input type="text" id="f-area" autocomplete="off">
+                    <div class="geo-ac">
+                        <input type="text" id="f-area" placeholder="منطقة / شارع / كمبوند / قرية" autocomplete="off">
+                        <ul class="ga-list" id="ga-area-list"></ul>
+                    </div>
                 </label>
                 <label class="edit-field">
                     <span>الشارع / تفاصيل العنوان</span>
@@ -249,8 +258,6 @@ let editingCustomerId = null;
 let editingRawText = '';
 let lastRefreshTime = null;
 let booksCatalog = [];
-let govCitiesCache = {};
-let govList = [];
 
 const TAB_LABELS = {
     confirmed: 'مسجَّل',
@@ -625,11 +632,10 @@ async function openEdit(customerId) {
     el('f-remarks').value = customer.remarks || '';
 
     const addr = customer.address || {};
-    await loadGovernorates();                       // populates f-governorate
-    await loadCityOptions(addr.governorate || '');
-    selectValue('f-governorate', addr.governorate || '');
-    selectValue('f-city', addr.city || '', addr.governorate || '');
-    el('f-area').value = addr.area || '';
+    govWidget.setValue(addr.governorate || '');
+    cityWidget.setScope(addr.governorate || '');
+    cityWidget.setValue(addr.city || '');
+    areaWidget.setValue(addr.area || '');
     el('f-street').value = addr.street || '';
 
     renderBooksEditor(customer.books || []);
@@ -645,77 +651,173 @@ async function openEdit(customerId) {
     await loadBookCatalog();
 }
 
-async function loadGovernorates() {
-    const sel = el('f-governorate');
-    sel.innerHTML = '<option value="">-- اختر --</option>';
-    if (govList.length) {
-        govList.forEach(g => {
-            const opt = document.createElement('option');
-            opt.value = g.name_ar;
-            opt.textContent = g.name_ar;
-            sel.appendChild(opt);
+// ── Geo autocomplete (Task 4) ───────────────────────────────────────────
+// Searchable candidate dropdown over the full geographic reference
+// (/api/geo/search). Free text is ALWAYS allowed: candidates only fill the
+// input when explicitly picked; anything typed is preserved as-is on save.
+const GA_TYPE_LABELS = {
+    governorate: 'محافظة',
+    city: 'مدينة',
+    area: 'منطقة',
+    road: 'شارع',
+    compound: 'كمبوند',
+    village: 'قرية',
+};
+
+function makeGeoAutocomplete(cfg) {
+    const input = cfg.input;
+    const list = cfg.list;
+    const types = cfg.types;
+    const limit = cfg.limit || 8;
+    const wrapper = input.parentElement;
+    const baselineCache = new Map();
+    let items = [];
+    let active = -1;
+    let open = false;
+    let timer = null;
+    let scopeGov = '';
+
+    function normalize(s) {
+        return String(s || '')
+            .replace(/[\u0660-\u0669]/g, d => String.fromCharCode(d.charCodeAt(0) - 0x0660 + 0x30))
+            .replace(/[أإآ]/g, 'ا')
+            .replace(/ة/g, 'ه')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+    }
+
+    function close() {
+        open = false;
+        active = -1;
+        list.innerHTML = '';
+        list.hidden = true;
+    }
+
+    function paint() {
+        Array.from(list.children).forEach((li, idx) => li.classList.toggle('active', idx === active));
+    }
+
+    function readRows(rows) {
+        items = rows;
+        active = -1;
+        list.innerHTML = '';
+        if (!items.length) { close(); return; }
+        items.forEach((it, idx) => {
+            const li = document.createElement('li');
+            li.className = 'ga-item';
+            const meta = [GA_TYPE_LABELS[it.type] || it.type];
+            if (it.governorate) meta.push(it.governorate);
+            li.innerHTML = `<span class="ga-name">${esc(it.name)}</span><span class="ga-meta">${meta.map(esc).join(' · ')}</span>`;
+            li.addEventListener('mousedown', e => { e.preventDefault(); pick(idx); });
+            li.addEventListener('mousemove', () => { active = idx; paint(); });
+            list.appendChild(li);
         });
-        return;
+        list.hidden = false;
+        open = true;
     }
-    try {
-        const res = await fetch('/api/geo/governorates');
-        const data = await res.json();
-        if (data.ok && Array.isArray(data.governorates)) {
-            govList = data.governorates;
-            sel.innerHTML = '<option value="">-- اختر --</option>';
-            data.governorates.forEach(g => {
-                const opt = document.createElement('option');
-                opt.value = g.name_ar;
-                opt.textContent = g.name_ar;
-                sel.appendChild(opt);
-            });
-        }
-    } catch (err) {
-        console.error('loadGovernorates failed:', err);
-    }
-}
 
-async function loadCityOptions(govName) {
-    const sel = el('f-city');
-    sel.innerHTML = '<option value="">-- اختر --</option>';
-    if (!govName) return;
-    if (govCitiesCache[govName]) {
-        fillCitySelect(sel, govCitiesCache[govName]);
-        return;
-    }
-    try {
-        const res = await fetch('/api/geo/cities?governorate=' + encodeURIComponent(govName));
-        const data = await res.json();
-        if (data.ok && Array.isArray(data.cities)) {
-            govCitiesCache[govName] = data.cities;
-            fillCitySelect(sel, data.cities);
+    async function loadBaseline(govName) {
+        if (!govName) return [];
+        if (baselineCache.has(govName)) return baselineCache.get(govName);
+        try {
+            const res = await fetch('/api/geo/cities?governorate=' + encodeURIComponent(govName));
+            const data = await res.json();
+            const cities = (data.ok && Array.isArray(data.cities)) ? data.cities : [];
+            const rows = cities.map(c => ({ name: c.name_ar, type: 'city', governorate: govName }));
+            baselineCache.set(govName, rows);
+            return rows;
+        } catch (err) {
+            return [];
         }
-    } catch (err) {
-        console.error('loadCityOptions failed:', err);
     }
-}
 
-function fillCitySelect(sel, cities) {
-    sel.innerHTML = '<option value="">-- اختر --</option>';
-    cities.forEach(c => {
-        const opt = document.createElement('option');
-        opt.value = c.name_ar;
-        opt.textContent = c.name_ar;
-        sel.appendChild(opt);
+    async function loadResults(q) {
+        if (!q.trim()) {
+            if (types === 'city') return loadBaseline(scopeGov);
+            return [];
+        }
+        const url = `/api/geo/search?q=${encodeURIComponent(q)}&types=${encodeURIComponent(types)}&limit=${limit}`;
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            let matched = Array.isArray(data.results) ? data.results : [];
+            // City candidates stay scoped to the governorate's own cities even
+            // when the governorate field holds free text.
+            if (types === 'city' && scopeGov) {
+                const scopeN = normalize(scopeGov);
+                matched = matched.filter(r => normalize(r.governorate) === scopeN);
+            }
+            return matched;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    async function search(q) {
+        const rows = await loadResults(q);
+        if (rows === null) { close(); return; }
+        if (rows.length) readRows(rows);
+        else close();
+    }
+
+    function schedule(q) {
+        clearTimeout(timer);
+        timer = setTimeout(() => search(q), 250);
+    }
+
+    function pick(idx) {
+        const it = items[idx];
+        if (!it) return;
+        input.value = it.name;
+        markMatched(true);
+        if (cfg.onSelect) cfg.onSelect(it);
+        close();
+    }
+
+    function markMatched(isMatched) {
+        input.classList.toggle('ga-unmatched', !isMatched);
+        input.title = isMatched
+            ? ''
+            : 'القيمة غير مذكورة في قائمة المواقع المعتمدة — تم حفظها كنص حر وسيتم التحقق منها عند الحفظ';
+    }
+
+    input.addEventListener('input', () => schedule(input.value));
+    input.addEventListener('focus', () => {
+        if (list.hidden || list.childElementCount === 0) schedule(input.value);
     });
-}
+    input.addEventListener('keydown', e => {
+        if (e.key === 'ArrowDown' && open) { e.preventDefault(); active = Math.min(active + 1, items.length - 1); paint(); return; }
+        if (e.key === 'ArrowUp' && open) { e.preventDefault(); active = Math.max(active - 1, 0); paint(); return; }
+        if (e.key === 'Enter') {
+            if (open && active >= 0) { e.preventDefault(); pick(active); }
+            else if (open) close();
+            return;
+        }
+        if (e.key === 'Escape' || e.key === 'Tab') close();
+    });
+    document.addEventListener('mousedown', e => { if (!wrapper.contains(e.target)) close(); });
 
-function selectValue(selId, value, govName) {
-    const sel = el(selId);
-    if (!value) { sel.value = ''; return; }
-    const present = Array.from(sel.options).some(o => o.value === value);
-    if (present) { sel.value = value; return; }
-    // Off-list stored value → keep it marked so a save doesn't silently drop it.
-    const opt = document.createElement('option');
-    opt.value = value;
-    opt.textContent = `${value} (غير مذكور في القائمة — سيتطلب مراجعة)`;
-    sel.appendChild(opt);
-    sel.value = value;
+    close();
+
+    return {
+        setValue(v) {
+            input.value = v || '';
+            close();
+            if (!String(v || '').trim()) { markMatched(true); return; }
+            markMatched(true);
+            const q = v.trim();
+            clearTimeout(timer);
+            timer = setTimeout(async () => {
+                const rows = await loadResults(q);
+                if (rows === null) { return; }  // network failure → keep optimistic state
+                const exact = rows.some(r => normalize(r.name) === normalize(q));
+                markMatched(exact);
+            }, 200);
+        },
+        setScope(govName) { scopeGov = govName || ''; },
+        close,
+    };
 }
 
 // ── Books editor ───────────────────────────────────────────
@@ -911,10 +1013,10 @@ async function resendEdit() {
         el('f-phone2').value = p.phone2 || '';
         el('f-remarks').value = p.remarks || '';
         const addr = p.address || {};
-        selectValue('f-governorate', addr.governorate || '');
-        await loadCityOptions(addr.governorate || '');
-        selectValue('f-city', addr.city || '', addr.governorate || '');
-        el('f-area').value = addr.area || '';
+        govWidget.setValue(addr.governorate || '');
+        cityWidget.setScope(addr.governorate || '');
+        cityWidget.setValue(addr.city || '');
+        areaWidget.setValue(addr.area || '');
         el('f-street').value = addr.street || '';
         renderBooksEditor(p.books || []);
 
@@ -1190,8 +1292,34 @@ function showToast(msg, type = 'info') {
 
 // ── Init ───────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    el('f-governorate').addEventListener('change', () => {
-        loadCityOptions(el('f-governorate').value).then(() => { el('f-city').value = ''; });
+    const govWidget = makeGeoAutocomplete({
+        input: el('f-governorate'),
+        list: el('ga-gov-list'),
+        types: 'governorate',
+        limit: 8,
+        onSelect: () => {
+            cityWidget.setScope(el('f-governorate').value.trim());
+            cityWidget.close();
+        }
+    });
+    const cityWidget = makeGeoAutocomplete({
+        input: el('f-city'),
+        list: el('ga-city-list'),
+        types: 'city',
+        limit: 8
+    });
+    const areaWidget = makeGeoAutocomplete({
+        input: el('f-area'),
+        list: el('ga-area-list'),
+        types: 'area,road,compound,village',
+        limit: 10
+    });
+
+    // Re-scope the city candidates to whatever the governorate field holds
+    // (free text included) and clear a city picked under the old scope.
+    el('f-governorate').addEventListener('input', () => {
+        cityWidget.setScope(el('f-governorate').value.trim());
+        cityWidget.close();
     });
 
     el('f-raw').addEventListener('input', () => {
