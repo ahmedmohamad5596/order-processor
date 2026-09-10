@@ -44,6 +44,7 @@ orders_output.xlsx
 
 # Cache files
 data/*.json
+!data/areas_learned.json
 
 # State & temp files
 state.json

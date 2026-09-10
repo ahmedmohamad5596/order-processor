@@ -1,0 +1,117 @@
+{
+  "جسر السويس": {
+    "area_name": "جسر السويس",
+    "governorate_id": "01",
+    "source": "manual",
+    "confidence": "high",
+    "city_id": null
+  },
+  "بركة النصر": {
+    "city_id": "01-011",
+    "area_name": "بركة النصر",
+    "governorate_id": "01",
+    "source": "manual",
+    "confidence": "high"
+  },
+  "الواحات البحرية": {
+    "city_id": "الواحات",
+    "area_name": "الواحات البحرية",
+    "governorate": "البحيرة",
+    "city": "الواحات البحرية"
+  },
+  "التجمع الخامس": {
+    "city_id": "01-035",
+    "area_name": "التجمع الخامس",
+    "governorate_id": "01",
+    "source": "manual",
+    "confidence": "high"
+  },
+  "الرحاب": {
+    "city_id": "01-035",
+    "area_name": "الرحاب",
+    "governorate_id": "01",
+    "source": "manual",
+    "confidence": "high"
+  },
+  "الزريبة": {
+    "city_id": "02-020",
+    "area_name": "الزريبة",
+    "governorate_id": "02",
+    "governorate": "الجيزة",
+    "city": "الطالبية",
+    "source": "reviewed_seed",
+    "confidence": "high"
+  },
+  "نزلة عبداللاه": {
+    "city_id": "22-001",
+    "area_name": "نزلة عبداللاه",
+    "governorate_id": "22",
+    "governorate": "أسيوط",
+    "city": "أسيوط",
+    "source": "reviewed_seed",
+    "confidence": "high"
+  },
+  "المنطقة الثالثة": {
+    "city_id": "11-010",
+    "area_name": "المنطقة الثالثة",
+    "governorate_id": "11",
+    "governorate": "المنوفية",
+    "city": "السادات",
+    "source": "reviewed_seed",
+    "confidence": "high"
+  },
+  "حلمية الزيتون": {
+    "city_id": "01-006",
+    "area_name": "حلمية الزيتون",
+    "governorate_id": "01",
+    "governorate": "القاهرة",
+    "city": "الزيتون",
+    "source": "reviewed_seed",
+    "confidence": "high"
+  },
+  "محلة أنجاق": {
+    "city_id": "08-012",
+    "area_name": "محلة أنجاق",
+    "governorate_id": "08",
+    "governorate": "الدقهلية",
+    "city": "شربين",
+    "source": "reviewed_seed",
+    "confidence": "high"
+  },
+  "ميت بره": {
+    "city_id": "11-006",
+    "area_name": "ميت بره",
+    "governorate_id": "11",
+    "governorate": "المنوفية",
+    "city": "قويسنا",
+    "source": "reviewed_seed",
+    "confidence": "high"
+  },
+  "الهايكستب": {
+    "city_id": "01-038",
+    "area_name": "الهايكستب",
+    "governorate_id": "01",
+    "governorate": "القاهرة",
+    "city": "الشروق",
+    "source": "reviewed_seed",
+    "confidence": "high"
+  },
+  "الحي الثاني": {
+    "city_id": "02-016",
+    "area_name": "الحي الثاني",
+    "governorate_id": "02",
+    "governorate": "الجيزة",
+    "city": "أكتوبر (مدينة 6 أكتوبر)",
+    "source": "reviewed_seed",
+    "confidence": "high"
+  },
+  "الحي الثامن": {
+    "city_id": "01-004",
+    "area_name": "الحي الثامن",
+    "governorate_id": "01",
+    "governorate": "القاهرة",
+    "city": "شرق مدينة نصر",
+    "source": "reviewed_seed",
+    "confidence": "high"
+  }
+}
