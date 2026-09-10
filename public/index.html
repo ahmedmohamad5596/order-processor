@@ -258,6 +258,9 @@ let editingCustomerId = null;
 let editingRawText = '';
 let lastRefreshTime = null;
 let booksCatalog = [];
+// Geo-autocomplete widgets, initialized in the DOMContentLoaded handler but
+// used by openEdit/resendEdit (top-level), so they live in script scope.
+let govWidget, cityWidget, areaWidget;
 
 const TAB_LABELS = {
     confirmed: 'مسجَّل',
@@ -1292,7 +1295,7 @@ function showToast(msg, type = 'info') {
 
 // ── Init ───────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    const govWidget = makeGeoAutocomplete({
+    govWidget = makeGeoAutocomplete({
         input: el('f-governorate'),
         list: el('ga-gov-list'),
         types: 'governorate',
@@ -1302,13 +1305,13 @@ document.addEventListener('DOMContentLoaded', () => {
             cityWidget.close();
         }
     });
-    const cityWidget = makeGeoAutocomplete({
+    cityWidget = makeGeoAutocomplete({
         input: el('f-city'),
         list: el('ga-city-list'),
         types: 'city',
         limit: 8
     });
-    const areaWidget = makeGeoAutocomplete({
+    areaWidget = makeGeoAutocomplete({
         input: el('f-area'),
         list: el('ga-area-list'),
         types: 'area,road,compound,village',
