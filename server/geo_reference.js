@@ -17,7 +17,7 @@ const path = require('path');
 const PYTHON_PATH = process.env.PYTHON_PATH || 'python';
 const ENGINE_DIR = path.join(__dirname, '..', 'engine');
 
-// Single embedded program handling all three commands. request = {cmd, ...}.
+// Single embedded program handling all commands. request = {cmd, ...}.
 const PYTHON_PROGRAM = `
 import sys
 import json
@@ -26,7 +26,12 @@ sys.path.insert(0, r'${ENGINE_DIR.replace(/\\/g, '\\\\')}')
 
 from engine.lookup_builder import build_lookup
 from engine.geo_search import search_geo
-from engine.normalizer import normalize_input, normalize_lookup_key
+from engine.save_address import (
+    canonicalize_city,
+    resolve_address,
+    assemble_saved_address,
+    record_save_knowledge,
+)
 
 lookup = build_lookup()
 
@@ -38,71 +43,6 @@ def gov_id_by_name(name):
         if ginfo['name_ar'] == target:
             return ginfo['id']
     return None
-
-def canonicalize(req):
-    from engine.matcher import match_address
-    from engine.normalizer import normalize_input
-    city = (req.get('city') or '').strip()
-    gov = (req.get('governorate') or '').strip()
-    if not city:
-        return {'matched': False, 'error': 'city is required'}
-    text = city if not gov else f"{city} \\u060c {gov}"
-    res = match_address(text, lookup)
-    gs = getattr(res.governorate_status, 'value', str(res.governorate_status))
-    cs = getattr(res.city_status, 'value', str(res.city_status))
-    matched = cs == 'confirmed' and bool(res.city)
-    resolved_city = res.city
-    resolved_gov = res.governorate
-    conflict = bool(resolved_gov) and bool(gov) and normalize_input(resolved_gov) != normalize_input(gov)
-    reason = res.review_reason or ''
-    amb = ('ambiguous' in reason.lower()) or ('needs manual selection' in reason.lower())
-    return {
-        'matched': matched,
-        'city': resolved_city,
-        'governorate': resolved_gov,
-        'gov_status': gs,
-        'city_status': cs,
-        'conflict': conflict,
-        'ambiguous': amb,
-        'not_found': bool(not matched and not amb),
-        'review_reason': reason,
-    }
-
-def resolve_address(req):
-    """Resolve canonical entity ids for a saved (operator-entered) address."""
-    gov = str(req.get('governorate') or '').strip()
-    city = str(req.get('city') or '').strip()
-    area = str(req.get('area') or '').strip()
-
-    gid = ''
-    for ginfo in lookup['governorates'].values():
-        if normalize_lookup_key(ginfo['name_ar']) == normalize_lookup_key(gov):
-            gid = ginfo['id']
-            break
-
-    cid = ''
-    for cinfo in lookup['cities'].values():
-        texts = [cinfo['name_ar'], *cinfo.get('aliases', [])]
-        if normalize_lookup_key(city) in {normalize_lookup_key(t) for t in texts}:
-            if not gid or cinfo.get('governorate_id') == gid:
-                cid = cinfo['id']
-                break
-
-    aid = ''
-    for ainfo in lookup['areas'].values():
-        texts = [str(ainfo.get('area_name') or ''), *ainfo.get('aliases', [])]
-        if normalize_lookup_key(area) in {normalize_lookup_key(t) for t in texts}:
-            if (not cid or ainfo.get('city_id') == cid or not ainfo.get('city_id')) and \
-               (not gid or ainfo.get('governorate_id') == gid or not ainfo.get('governorate_id')):
-                aid = ainfo['id']
-                break
-
-    return {
-        'governorate_id': gid or None,
-        'city_id': cid or None,
-        'area_id': aid or None,
-        'normalized': normalize_input(' '.join(x for x in (gov, city, area) if x)),
-    }
 
 def main():
     req = json.loads(sys.stdin.read() or '{}')
@@ -123,14 +63,20 @@ def main():
         cities.sort(key=lambda c: c['name_ar'])
         print(json.dumps({'governorate': req.get('governorate'), 'cities': cities},
                          ensure_ascii=False))
-    elif cmd == 'canonicalize':
-        print(json.dumps(canonicalize(req), ensure_ascii=False))
-    elif cmd == 'resolve':
-        print(json.dumps(resolve_address(req), ensure_ascii=False))
-    elif cmd == 'knowledge':
-        from engine.address_knowledge import record_address_save
-        knowledge = record_address_save(req)
-        print(json.dumps({'ok': True, 'knowledge': knowledge}, ensure_ascii=False))
+    elif cmd == 'save_address':
+        address, city_errors = assemble_saved_address(
+            req.get('previous') or {},
+            req.get('updates') or {},
+            lookup,
+            raw_text=req.get('raw_text') or '',
+        )
+        recorded, kerr = record_save_knowledge(address, city_errors)
+        print(json.dumps({
+            'address': address,
+            'city_errors': city_errors,
+            'knowledge_recorded': recorded,
+            'knowledge_error': kerr,
+        }, ensure_ascii=False))
     elif cmd == 'search':
         q = req.get('q') or ''
         types = req.get('types') or ''
@@ -195,18 +141,6 @@ async function getCitiesForGovernorate(governorate) {
 }
 
 /**
- * Canonicalize an admin-entered city (and its governorate): canonical name,
- * auto-derived governorate, conflict/ambiguity detection — the edit-time version
- * of the old system's cityReferenceErrors.
- * @param {string} city
- * @param {string} governorate
- * @returns {Promise<{ok, result?: object, error?: string}>}
- */
-async function canonicalizeCity(city, governorate) {
-    return runGeo({ cmd: 'canonicalize', city, governorate });
-}
-
-/**
  * Search the full geographic reference (governorates/cities/areas).
  * @param {string} q raw query
  * @param {string} [types] comma-separated entity types; empty = all
@@ -218,23 +152,20 @@ async function searchGeo(q, types, limit) {
 }
 
 /**
- * Resolve canonical governorate/city/area ids + normalized form for a saved
- * address (fix2 §9). Ids come from names AND learned aliases.
- * @param {{governorate?: string, city?: string, area?: string}} parts
- * @returns {Promise<{ok, result?: {governorate_id, city_id, area_id, normalized}, error?}>}
+ * Assemble + validate a saved address record in one engine pass (fix2 §9/§10):
+ * canonicalization against the full reference, resolved ids, raw/manual values,
+ * resolution status/confidence/evidence, and knowledge recording for clean
+ * human saves. The result is exactly what gets stored.
+ * @param {{previous?: object, updates?: object, raw_text?: string}} input
+ * @returns {Promise<{ok, result?: {address, city_errors, knowledge_recorded, knowledge_error}, error?}>}
  */
-async function resolveAddress(parts) {
-    return runGeo({ cmd: 'resolve', ...parts });
+async function assembleSavedAddress({ previous, updates, raw_text } = {}) {
+    return runGeo({
+        cmd: 'save_address',
+        previous: previous || {},
+        updates: updates || {},
+        raw_text: raw_text || ''
+    });
 }
 
-/**
- * Record a human-confirmed address save as structured knowledge (fix2 §10):
- * verified mapping + alias votes. Promoted spellings feed the lookup builder.
- * @param {object} entry saved address fields
- * @returns {Promise<{ok, result?: object, error?}>}
- */
-async function recordAddressKnowledge(entry) {
-    return runGeo({ cmd: 'knowledge', ...entry });
-}
-
-module.exports = { getGovernorates, getCitiesForGovernorate, canonicalizeCity, searchGeo, resolveAddress, recordAddressKnowledge };
+module.exports = { getGovernorates, getCitiesForGovernorate, searchGeo, assembleSavedAddress };

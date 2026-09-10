@@ -31,7 +31,7 @@ const fs = require('fs');
 const { splitCustomers } = require('./splitter');
 const { processCustomers, processCustomer } = require('./assembly');
 const { validatePhone, convertArabicDigits } = require('./phone_validator');
-const { getGovernorates, getCitiesForGovernorate, canonicalizeCity, searchGeo, resolveAddress, recordAddressKnowledge } = require('./geo_reference');
+const { getGovernorates, getCitiesForGovernorate, searchGeo, assembleSavedAddress } = require('./geo_reference');
 const { getBookCatalog } = require('./book_catalog');
 const { writeToExcel } = require('./excel_writer');
 const { initDatabase, loadState, saveState, clearState, getPool } = require('./state_store');
@@ -441,7 +441,6 @@ app.put('/api/customer/:id', async (req, res) => {
     }
 
     const customer = state.customers[idx];
-    const cityErrors = [];
 
     // Plain fields
     if (updates.name !== undefined) customer.name = updates.name;
@@ -452,92 +451,31 @@ app.put('/api/customer/:id', async (req, res) => {
     if (updates.discount_note !== undefined) customer.discount_note = updates.discount_note;
     if (updates.year_edition !== undefined) customer.year_edition = updates.year_edition;
 
-    // Address edit → canonicalize city↔governorate (old cityReferenceErrors).
+    // Address edit → assemble against the FULL geographic reference (fix2 §9/§10).
+    // The engine keeps the operator's manual values, canonicalizes the city via
+    // names + learned aliases, stores raw/normalized + resolved ids + resolution
+    // status/confidence/evidence, and records clean human saves as knowledge.
+    const cityErrors = [];
     if (updates.address) {
         const prev = customer.address || {};
-        const a = { ...prev, ...updates.address };
-        const city = String(a.city || '').trim();
-        const gov = String(a.governorate || '').trim();
-
-        if (city) {
-            const ref = await canonicalizeCity(city, gov);
-            if (ref.ok) {
-                const r = ref.result;
-                if (r.matched) {
-                    a.city = r.city;
-                    a.governorate = r.governorate;
-                    if (r.conflict) {
-                        cityErrors.push(`city: "${r.city}" belongs to ${r.governorate} per the city reference but the governorate field says "${gov}" — verify`);
-                    }
-                } else if (r.ambiguous) {
-                    cityErrors.push(`city: "${city}" is ambiguous in the city reference — pick from the city list`);
-                } else {
-                    cityErrors.push(`city: "${city}" not found in the city reference — pick from the city list or correct the spelling`);
-                }
-            } else {
-                cityErrors.push(`city: "${city}" could not be checked — ${ref.error}`);
-            }
-        } else if (gov) {
-            // Empty city is only valid when the governorate is official (locality===governorate case).
-            const ref = await getGovernorates();
-            const official = ref.ok && ref.result.governorates.some(g => g.name_ar === gov);
-            if (!official) {
-                cityErrors.push(`governorate: "${gov}" is not an official governorate — pick an official governorate or set the arrival city`);
-            }
-        }
-
-        if (cityErrors.length) {
-            a.needs_review = true;
-            a.review_reason = cityErrors.join('؛ ');
-        } else if (a.city) {
-            a.needs_review = false;
-            a.review_reason = '';
-            a.governorate_status = 'confirmed';
-            a.city_status = 'confirmed';
-            if (!a.area) a.area = a.city;
-        }
-
-        // fix2 §9 — keep raw + normalized, resolved ids of the final values,
-        // the operator's manual values, and how resolution happened. The ids
-        // come from the full reference (name + learned aliases), never from
-        // the client.
-        const rid = await resolveAddress({
-            governorate: a.governorate || '',
-            city: a.city || '',
-            area: a.area || ''
+        const sa = await assembleSavedAddress({
+            previous: prev,
+            updates: updates.address,
+            raw_text: customer.raw_text || ''
         });
-        if (rid.ok) {
-            a.governorate_id = rid.result.governorate_id || null;
-            a.city_id = rid.result.city_id || null;
-            a.area_id = rid.result.area_id || null;
-            a.normalized = rid.result.normalized || '';
-        }
-        a.raw = a.raw || String(prev.raw || '') || String(customer.raw_text || '');
-        a.manual_governorate = a.governorate || '';
-        a.manual_city = a.city || '';
-        a.manual_area = a.area || '';
-        a.resolution_status = cityErrors.length ? 'needs_review'
-            : (a.city ? (a.city_id ? 'human_confirmed' : 'manual') : 'needs_review');
-        a.resolution_confidence = a.confidence_scores || {};
-        a.resolution_evidence = a.matched_via || {};
-
-        customer.address = a;
-
-        // fix2 §10 — a clean human save is structured knowledge the resolver
-        // learns from (verified mapping + alias votes), never a special case.
-        if (!cityErrors.length && a.city) {
-            await recordAddressKnowledge({
-                raw: a.raw || '',
-                normalized: a.normalized || '',
-                governorate: a.governorate || '',
-                city: a.city,
-                area: a.area || '',
-                street: a.street || '',
-                governorate_id: a.governorate_id || null,
-                city_id: a.city_id || null,
-                area_id: a.area_id || null,
-                needs_review: false
-            }).catch(err => logger.warn('Address knowledge record failed', { error: err.message }));
+        if (!sa.ok) {
+            customer.address = {
+                ...prev,
+                ...updates.address,
+                needs_review: true,
+                review_reason: `address save could not be assembled — ${sa.error}`
+            };
+        } else {
+            customer.address = sa.result.address;
+            cityErrors.push(...sa.result.city_errors);
+            if (!sa.result.knowledge_recorded && sa.result.knowledge_error) {
+                logger.warn('Address knowledge record failed', { error: sa.result.knowledge_error });
+            }
         }
     }
 
