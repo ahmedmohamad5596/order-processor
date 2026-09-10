@@ -530,6 +530,35 @@ tbody tr:last-child td { border-bottom: none; }
     .results-header { flex-direction: column; gap: 4px; align-items: flex-start; }
 }
 
+/* ── Responsive: tablet & small laptop ──────────────────── */
+@media (max-width: 900px) {
+    .header { flex-wrap: wrap; gap: 10px; }
+    /* the 9-column results table scrolls horizontally instead of crushing */
+    .results-section { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { min-width: 960px; }
+    .bulk-bar { flex-wrap: wrap; }
+    .books-editor-head { flex-wrap: wrap; }
+    .actions-cell { flex-wrap: wrap; }
+    .footer { flex-direction: column; align-items: center; gap: 4px; text-align: center; }
+}
+
+/* ── Responsive: mobile ─────────────────────────────────── */
+@media (max-width: 600px) {
+    .container { padding: 16px 12px 8px; }
+    .brand h1 { font-size: 16px; }
+    .brand p { font-size: 11px; }
+    .brand-badge { width: 32px; height: 32px; font-size: 17px; }
+    .header-info { font-size: 11.5px; padding: 5px 10px; }
+    .input-section { padding: 16px 14px; }
+    .btn-row { gap: 8px; }
+    .btn-row .btn { flex: 1 1 46%; }
+    .tab { padding: 7px 14px; font-size: 12.5px; }
+    .results-header { padding: 12px 14px; }
+    .toast { max-width: calc(100vw - 28px); }
+    .raw-head { flex-wrap: wrap; }
+    .modal-backdrop { padding: 12px 8px; }
+}
+
 /* ── Status tabs ─────────────────────────────────────────── */
 .tabs-row {
     display: flex;
@@ -715,6 +744,8 @@ tbody tr:last-child td { border-bottom: none; }
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
     margin-top: 10px;
 }
 .book-exc-toggle {
