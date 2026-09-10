@@ -27,6 +27,10 @@ const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 1000;  // 1 second between retries
 
 const PROMPT_TEMPLATE = `أنت مساعد متخصص في استخراج بيانات طلبات الكتب من النصوص العربية.
+النصوص من عملاء حقيقيين وقد تحتوي أخطاء إملائية (غالباً حروف ناقصة/زائدة/مبدلة) في اسم العميل أو الكتاب أو العنوان،
+وكثيراً ما يكتب العملاء اسم الكتاب بنقل حرفي عربي (مثلاً: pioneer تُكتب "بيونير" أو "بايونير"، power up تُكتب "باور اب").
+يجب عليك فهم ذلك واستخراج البيانات الصحيحة مع تصحيح أسماء الكتب إلى الاسم الإنجليزي الرسمي.
+
 استخرج المعلومات التالية من نص الطلب واحرص على الدقة:
 
 المدخل: {{INPUT_TEXT}}
@@ -41,10 +45,17 @@ const PROMPT_TEMPLATE = `أنت مساعد متخصص في استخراج بيا
   "year_edition": "أي سنة أو إصدار مذكور أو null"
 }
 
+قائمة أسماء الكتب الرسمية (اختر منها دائماً الاسم الصحيح لكل كتاب):
+Aim High, Challenge, Close Up, New Close Up, Focus, Full Blast (Second Edition / Special), Macmillan, Power Up, Superland, Top Score, Team Together, Upstream, New Upstream, English World, Everybody Up, Family and Friends, Our World, Wonderful World (Second Edition), Oxford Discover, Our Discovery Island, Pioneer, World Watchers
+
 ملاحظات مهمة:
 - اكتب phones كـ array من السلاسل النصية
 - اكتب items كـ array من الأسطر المنفصلة (كل كتاب/كمية في سطر)
-- لا تغير أي كلمة في address_raw
+- صور أسماء الكتب المكتوبة بالعربية أو بأخطاء إملائية إلى الاسم الإنجليزي الرسمي أعلاه.
+  مثال: "بيونير B1" أو "بايونير B1" → "Pioneer B1"، "باور اب" → "Power Up"، "فول بلاست سبشل" → "Full Blast Special"
+- احتفظ برقم المرحلة/الصف (B1، B2، أولى إعدادي... إلخ) كما هو مع الاسم الإنجليزي
+- صوب الأخطاء الإملائية البسيطة في اسم العميل مع الحفاظ عليه قريباً من الأصل
+- لا تغير أي كلمة في address_raw (ولا تصححها — أخطاء العنوان تُعالج لاحقاً)
 - إذا لم يوجد معلومات لحقل معين، استخدم null
 - أرجع JSON فقط بدون أي نص إضافي`;
 
