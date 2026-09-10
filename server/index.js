@@ -5,10 +5,8 @@
  *
  * Integrated modules:
  * - server/splitter.js (Task 3): Customer boundary splitting
- * - server/ai_extractor.js (Task 4): AI extraction via OpenRouter
+ * - server/ai_extractor.js (Task 4): AI extraction via AI API
  * - server/phone_validator.js (Task 5): Phone validation
- * - server/address_matcher.js (Task 6): Address matching (Python bridge)
- * - server/book_matcher.js (Task 7): Book matching (Python bridge)
  * - server/assembly.js (Task 8): Assembly layer
  * - server/excel_writer.js (Task 9): Excel export
  * - server/state_store.js (Task 18): State persistence
@@ -93,13 +91,13 @@ const RATE_LIMIT = 60; // requests per minute
 const RATE_WINDOW = 60000; // 1 minute
 
 // Periodic cleanup of expired rate-limit entries to avoid unbounded memory growth
-setInterval(() => {
+const _cleanupTimer = setInterval(() => {
     const now = Date.now();
     for (const [ip, entry] of requestCounts) {
         if (now > entry.resetAt) requestCounts.delete(ip);
     }
 }, RATE_WINDOW);
-requestCounts.unref?.();
+_cleanupTimer.unref();
 
 // ── Middleware ─────────────────────────────────────────────────────
 app.use(express.json({ limit: '1mb' })); // Limit request body size
@@ -511,6 +509,9 @@ app.put('/api/customer/:id', async (req, res) => {
 // Port of the old system's /re-extract ("حفظ وإعادة إرسال").
 app.post('/api/customer/:id/re-extract', async (req, res) => {
     const customerId = parseInt(req.params.id);
+    if (isNaN(customerId)) {
+        return res.status(400).json({ ok: false, error: 'Invalid customer ID' });
+    }
     const state = await loadState();
     const customer = state.customers.find(c => c._editId === customerId);
 
@@ -536,6 +537,9 @@ app.post('/api/customer/:id/re-extract', async (req, res) => {
 // from export). Port of the old system's PATCH /:id/reject.
 app.post('/api/customer/:id/reject', async (req, res) => {
     const customerId = parseInt(req.params.id);
+    if (isNaN(customerId)) {
+        return res.status(400).json({ ok: false, error: 'Invalid customer ID' });
+    }
     const state = await loadState();
     const idx = state.customers.findIndex(c => c._editId === customerId);
 
@@ -595,7 +599,7 @@ app.post('/api/customers/delete', async (req, res) => {
     }
     
     const state = await loadState();
-    const idSet = new Set(ids.map(id => parseInt(id)));
+    const idSet = new Set(ids.map(id => parseInt(id)).filter(id => !isNaN(id)));
     
     // Filter out deleted customers
     state.customers = state.customers.filter(c => !idSet.has(c._editId));

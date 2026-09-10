@@ -1,4 +1,30 @@
-# قرار موديل الذكاء الاصطناعي (AI Model Decision)
+# قرارات المكدس الحالي (Current Stack Decisions)
+## التاريخ: 2026-09-10
+
+> **السابق:** الأقسام الأربعة التالية (Task 15-17) مسجلة كتاريخ مرجعي لكنها **superseded** — كانت تُفترض OpenRouter + GLM + response_format + state.json. الوضع الحالي مختلف (مُوثق أدناه).
+
+### الوضع الفعلي الحالي
+
+| البند | القرار |
+|---|---|
+| **موفر AI** | Agnes API hub عبر `AI_API_KEY` + `AI_API_URL` (بدل OpenRouter) |
+| **الموديل الأساسي** | `agnes-2.5-flash` (`AI_MODEL_ID`) |
+| **Fallback** | `AI_FREE_MODEL` (افتراضيًا نفس الموديل) عند 429 |
+| **response_format** | **مُزال نهائيًا** — يُعتمد على تعليمات الـprompt + regex extraction |
+| **توطين الـAI** | كل منطق الاقتراحات AI مدمج داخل `engine/customer_batch_engine.py` (استدعاء Python واحد/عميل) |
+| **وحدات مكررة** | `engine/ai_suggestions.py` و`engine/book_ai_suggestions.py` **حُذفتا** (كانا مكررين وميتين) |
+| **جسر ميت** | `server/address_matcher.js` و`server/book_matcher.js` **حُذفا** (غير مستخدمين في الإنتاج) |
+| **تأصيل الاقتراحات** | اقتراحا المحافظة والمدينة يُطبَّقان تلقائيًا **فقط** إذا كان الاسم مذكورًا في نص الطلب (in-text grounding) — مضاف للمحافظة في عهدة Task 16/اليوم |
+| **حفظ العنوان** | لا "echo" للمدينة داخل حقل المنطقة — تُمرَّر المدينة fallback لـ`resolve_address` فقط دون حفظها |
+| **حفظ الحالة** | PostgreSQL عبر `DATABASE_URL` (لذا لا `state.json`) |
+| **الحماية** | أداة داخلية بلا auth (قرار مقصود) |
+
+### ملاحظة تاريخية على GLM
+قرار Task 15 (استخدام `z-ai/glm-5.3-flash` المدفوع + `response_format`) **لم يعد قائمًا**: المكدس انتقل لـ Agnes 2.5 flash عبر `AI_API_KEY`، وأُزيل `response_format` (كان سبب NO-JSON على GLM). مقارنة التكلفة/الجودة في الأسفل تبقى مرجعًا للمقارنات القديمة.
+
+---
+
+# قرار موديل الذكاء الاصطناعي (AI Model Decision) — **superseded**
 ## التاريخ: 2026-09-08
 
 ### الخلفية
@@ -84,7 +110,7 @@
 
 ---
 
-# قرار Task 16: Batch Processing + Concurrency + Fallback
+# قرار Task 16: Batch Processing + Concurrency + Fallback — **superseded (history)**
 ## التاريخ: 2026-09-08
 
 ### الخلفية
@@ -153,7 +179,7 @@ Task 15 تم الاعتماد النهائي. الآن ننتقل لـTask 16 ل
 
 ---
 
-# قرار Task 17: Excel Export with Suggestion Fields
+# قرار Task 17: Excel Export with Suggestion Fields — **superseded (history)**
 ## التاريخ: 2026-09-08
 
 ### الخلفية

@@ -36,7 +36,7 @@ def _score(query: str, raw_texts: list[str]) -> float:
     """Best match score of query against candidate raw texts (0..100)."""
     best = 0.0
     for raw in raw_texts:
-        cand = normalize_for_search(raw)
+        cand = normalize_digits(normalize_for_search(raw))
         if not cand:
             continue
         if cand == query:

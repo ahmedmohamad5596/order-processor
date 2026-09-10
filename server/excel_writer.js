@@ -94,8 +94,10 @@ function estimateWidth(cellText) {
  */
 function generateFilename() {
     const now = new Date();
-    const date = now.toISOString().slice(0, 10).replace(/-/g, '-');
-    return `${date}.xlsx`;
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}.xlsx`;
 }
 
 /**

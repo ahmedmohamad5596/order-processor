@@ -113,6 +113,28 @@ def _city_grounded(canon_norm: str, lookup: dict, raw_text: str) -> bool:
     return False
 
 
+def _gov_grounded(suggestion: str, lookup: dict, raw_text: str) -> bool:
+    """True if the suggested governorate (or an alias) literally appears in
+    the address at word boundaries. Same grounding logic as _city_grounded
+    but for governorates — prevents hallucinated governorates from being
+    auto-applied when nothing in the text mentions them.
+    """
+    from engine.normalizer import normalize_input
+    from engine.matcher import _boundary_contains
+    sugn = normalize_input(suggestion)
+    if not sugn or not raw_text:
+        return False
+    text_norm = normalize_input(raw_text)
+    for ginfo in lookup['governorates'].values():
+        if normalize_input(ginfo['name_ar']) == sugn:
+            for target in ({sugn} |
+                           {normalize_input(a) for a in ginfo.get('aliases', [])}):
+                if target and _boundary_contains(text_norm, target):
+                    return True
+            return False
+    return False
+
+
 # ── AI Suggestion Engine (inline to avoid separate process spawn) ────────────
 
 async def _call_ai(prompt: str, system_msg: str, suggestion_type: str = 'no_match') -> dict:
@@ -507,8 +529,14 @@ async def process_customer_batch(customer_data: dict) -> dict:
                 elif city_sug:
                     address_result['ai_suggestion'] = {k: v for k, v in city_sug.items() if k != 'failure_type'}
 
-            # Auto-apply validated high-confidence suggestions
-            if gov_sug and _suggestion_can_auto_apply(gov_sug) and _suggestion_valid(gov_sug['suggestion'], all_govs):
+            # Auto-apply validated high-confidence governorate suggestions
+            # — two guards so a hallucinated governorate can never be auto-applied:
+            #  1. confident AND validated against the official governorate list
+            #  2. the governorate name (or an alias) must actually appear in the
+            #     address text — same grounding guard as city.
+            if (gov_sug and _suggestion_can_auto_apply(gov_sug)
+                    and _suggestion_valid(gov_sug['suggestion'], all_govs)
+                    and _gov_grounded(gov_sug['suggestion'], lookup, customer_data['address_raw'])):
                 name = gov_sug['suggestion']
                 address_result['governorate'] = name
                 address_result['governorate_status'] = 'confirmed'
@@ -518,7 +546,8 @@ async def process_customer_batch(customer_data: dict) -> dict:
                     if info['name_ar'] == name:
                         address_result['governorate_id'] = info['id']
                         break
-                logger.info(f'[ADDR-AUTO] governorate -> {name} (conf={gov_sug["confidence"]})')
+                logger.info(f'[ADDR-AUTO] governorate -> {name} '
+                            f'(conf={gov_sug["confidence"]}, grounded)')
 
             # City auto-apply — three guards so a suggestion can never fabricate:
             #  1. confident AND validated against the official city list

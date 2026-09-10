@@ -5,7 +5,7 @@
  * Note: These tests require a valid OPENROUTER_API_KEY.
  */
 
-const { extractCustomerData, validateExtractedData } = require('./ai_extractor');
+const { extractCustomerData } = require('./ai_extractor');
 
 // Sample customer texts for testing
 const TEST_CUSTOMERS = [
@@ -63,12 +63,8 @@ async function runTests() {
         if (result.ok) {
             console.log(`✅ Success (${duration}ms)`);
             console.log(`   Extracted: ${JSON.stringify(result.data, null, 2)}`);
-            
-            // Validate structure
-            const valid = validateExtractedData(result.data);
-            console.log(`   Validated: ${valid ? '✅' : '❌'}`);
-            
-            results.push({ id: customer.id, ok: true, valid, duration });
+
+            results.push({ id: customer.id, ok: true, duration });
         } else {
             console.log(`❌ Failed (${duration}ms): ${result.error}`);
             if (result.raw) {

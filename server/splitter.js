@@ -74,18 +74,21 @@ function splitMetadata(rawText) {
     }
 
     const text = rawText.trim();
-    // Count occurrences of primary separator (|||||||| or ===================)
-    const separatorCount = (text.match(/\|{8,}/g) || text.match(/={8,}/g) || []).length;
+    // Count occurrences of primary separators using exact SEPARATORS strings
+    let separatorCount = 0;
+    let primarySep = null;
+    for (const sep of SEPARATORS) {
+        const count = text.split(sep).length - 1;
+        if (count > 0) {
+            separatorCount = count;
+            primarySep = sep;
+            break;
+        }
+    }
 
     let emptyBlocks = 0;
-    if (separatorCount > 0) {
-        const parts = text.split(/\|{8,}/);
-        emptyBlocks = parts.filter(p => p.trim().length === 0).length;
-    }
-    
-    // Also check for ==== separator
-    if (separatorCount === 0 && /={8,}/.test(text)) {
-        const parts = text.split(/={8,}/);
+    if (separatorCount > 0 && primarySep) {
+        const parts = text.split(primarySep);
         emptyBlocks = parts.filter(p => p.trim().length === 0).length;
     }
 

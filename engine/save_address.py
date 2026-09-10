@@ -167,13 +167,14 @@ def assemble_saved_address(
         a["review_reason"] = ""
         a["governorate_status"] = "confirmed"
         a["city_status"] = "confirmed"
-        if not a.get("area"):
-            a["area"] = a["city"]
+
+    # Use city as area fallback for resolution only — don't persist the echo
+    fallback_area = a.get("area") or a.get("city") or ""
 
     rid = resolve_address(
         str(a.get("governorate") or ""),
         str(a.get("city") or ""),
-        str(a.get("area") or ""),
+        str(fallback_area),
         lookup,
     )
     a["governorate_id"] = rid["governorate_id"] or None

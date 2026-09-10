@@ -22,7 +22,6 @@ _NORMALIZE_MAP = str.maketrans({
 # Additional normalization for common typos
 _EXTRA_NORMALIZATION = [
     (r'ی', 'ي'),  # Persian ی → Arabic ي
-    (r'ك', 'ك'),  # Persian ك → Arabic ك
     (r'ہ', 'ه'),  # Urdu/Arabic variant
     (r'ؤ', 'و'),  # ؤ → و
     # Note: ئ → ي is NOT applied as it breaks words like ابتدائي
@@ -113,7 +112,7 @@ def normalize_for_search(text: str) -> str:
 
 def normalize_separators(text: str) -> str:
     """Normalize separator characters to spaces."""
-    return re.sub(r'[_./\\\-]+', ' ', text).replace('\s+', ' ').strip()
+    return re.sub(r'\s+', ' ', re.sub(r'[_./\\\-]+', ' ', text)).strip()
 
 
 # Arabic digit normalization
