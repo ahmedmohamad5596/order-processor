@@ -79,6 +79,12 @@ ai_suggestion = None
         }
 
 # Output as JSON
+area_id = None
+if result.area:
+    for anorm, ainfo in lookup['areas'].items():
+        if ainfo.get('area_name') == result.area:
+            area_id = ainfo['id']
+            break
 output = {
     'governorate': result.governorate,
     'governorate_status': result.governorate_status.value if hasattr(result.governorate_status, 'value') else str(result.governorate_status),
@@ -87,6 +93,9 @@ output = {
     'area': result.area,
     'area_status': result.area_status.value if hasattr(result.area_status, 'value') else str(result.area_status),
     'street': result.street,
+    'raw': address_text,
+    'normalized': normalize_input(address_text),
+    'area_id': area_id,
     'needs_review': result.needs_review,
     'review_reason': result.review_reason,
     'matched_via': result.matched_via,

@@ -31,7 +31,7 @@ const fs = require('fs');
 const { splitCustomers } = require('./splitter');
 const { processCustomers, processCustomer } = require('./assembly');
 const { validatePhone, convertArabicDigits } = require('./phone_validator');
-const { getGovernorates, getCitiesForGovernorate, canonicalizeCity, searchGeo } = require('./geo_reference');
+const { getGovernorates, getCitiesForGovernorate, canonicalizeCity, searchGeo, resolveAddress, recordAddressKnowledge } = require('./geo_reference');
 const { getBookCatalog } = require('./book_catalog');
 const { writeToExcel } = require('./excel_writer');
 const { initDatabase, loadState, saveState, clearState, getPool } = require('./state_store');
@@ -496,7 +496,49 @@ app.put('/api/customer/:id', async (req, res) => {
             a.city_status = 'confirmed';
             if (!a.area) a.area = a.city;
         }
+
+        // fix2 §9 — keep raw + normalized, resolved ids of the final values,
+        // the operator's manual values, and how resolution happened. The ids
+        // come from the full reference (name + learned aliases), never from
+        // the client.
+        const rid = await resolveAddress({
+            governorate: a.governorate || '',
+            city: a.city || '',
+            area: a.area || ''
+        });
+        if (rid.ok) {
+            a.governorate_id = rid.result.governorate_id || null;
+            a.city_id = rid.result.city_id || null;
+            a.area_id = rid.result.area_id || null;
+            a.normalized = rid.result.normalized || '';
+        }
+        a.raw = a.raw || String(prev.raw || '') || String(customer.raw_text || '');
+        a.manual_governorate = a.governorate || '';
+        a.manual_city = a.city || '';
+        a.manual_area = a.area || '';
+        a.resolution_status = cityErrors.length ? 'needs_review'
+            : (a.city ? (a.city_id ? 'human_confirmed' : 'manual') : 'needs_review');
+        a.resolution_confidence = a.confidence_scores || {};
+        a.resolution_evidence = a.matched_via || {};
+
         customer.address = a;
+
+        // fix2 §10 — a clean human save is structured knowledge the resolver
+        // learns from (verified mapping + alias votes), never a special case.
+        if (!cityErrors.length && a.city) {
+            await recordAddressKnowledge({
+                raw: a.raw || '',
+                normalized: a.normalized || '',
+                governorate: a.governorate || '',
+                city: a.city,
+                area: a.area || '',
+                street: a.street || '',
+                governorate_id: a.governorate_id || null,
+                city_id: a.city_id || null,
+                area_id: a.area_id || null,
+                needs_review: false
+            }).catch(err => logger.warn('Address knowledge record failed', { error: err.message }));
+        }
     }
 
     // Books edit → normalize + every book must carry a positive unit price.

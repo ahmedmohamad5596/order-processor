@@ -406,10 +406,14 @@ async def process_customer_batch(customer_data: dict) -> dict:
 
     # ── Address Matching ──
     address_result = {'governorate': None, 'city': None, 'area': None, 'street': None,
+                      'raw': None, 'normalized': None,
+                      'governorate_id': None, 'city_id': None, 'area_id': None,
                       'needs_review': False, 'review_reason': '', 'ai_suggestion': None}
     if customer_data.get('address_raw'):
         addr_match = match_address(customer_data['address_raw'], lookup)
         address_result.update({
+            'raw': customer_data['address_raw'],
+            'normalized': normalize_input(customer_data['address_raw']),
             'governorate': addr_match.governorate,
             'city': addr_match.city,
             'area': addr_match.area,
@@ -422,6 +426,22 @@ async def process_customer_batch(customer_data: dict) -> dict:
             'matched_via': addr_match.matched_via,
             'confidence_scores': addr_match.confidence_scores,
         })
+        # Resolved entity ids for the auto path too (not only AI auto-apply).
+        if not address_result['governorate_id'] and address_result['governorate']:
+            for _gnorm, ginfo in lookup['governorates'].items():
+                if ginfo['name_ar'] == address_result['governorate']:
+                    address_result['governorate_id'] = ginfo['id']
+                    break
+        if not address_result['city_id'] and address_result['city']:
+            for _cnorm, cinfo in lookup['cities'].items():
+                if cinfo['name_ar'] == address_result['city']:
+                    address_result['city_id'] = cinfo['id']
+                    break
+        if address_result['area']:
+            for _anorm, ainfo in lookup['areas'].items():
+                if ainfo.get('area_name') == address_result['area']:
+                    address_result['area_id'] = ainfo['id']
+                    break
 
         # AI suggestions for every non-confirmed address field (independently)
         if addr_match.needs_review:

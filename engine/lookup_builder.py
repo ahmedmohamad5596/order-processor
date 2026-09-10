@@ -11,6 +11,7 @@ from typing import Any
 
 import openpyxl
 
+import engine.address_knowledge as _address_knowledge
 from engine.normalizer import normalize_lookup_key, strip_prefix
 
 _EXCEL_PATH = Path(__file__).resolve().parent.parent / "egypt_governorates.xlsx"
@@ -234,6 +235,29 @@ def _build_areas(wb: openpyxl.Workbook, gov_by_id: dict, city_by_id: dict) -> di
     return areas
 
 
+def _merge_knowledge_aliases(cities: dict, areas: dict) -> None:
+    """Attach learned aliases from human-confirmed saves.
+
+    A city/area spelling that reached the vote threshold becomes an alias of
+    its canonical entity (matched by id). This is how §10 corrections improve
+    the resolver without any per-address rule: the alias simply becomes
+    searchable, canonicalizable and AI-suggestible like any other alias.
+    """
+    learned = _address_knowledge.learned_aliases()
+    for group, entries in (("cities", cities), ("areas", areas)):
+        for typed_norm, target_id in learned.get(group, {}).items():
+            for entry in entries.values():
+                if str(entry.get("id")) != str(target_id):
+                    continue
+                official = str(entry.get("name_ar") or entry.get("area_name") or "")
+                if normalize_lookup_key(official) == typed_norm:
+                    continue
+                aliases = entry.setdefault("aliases", [])
+                if typed_norm not in aliases:
+                    aliases.append(typed_norm)
+                break
+
+
 def _load_learned_areas() -> dict[str, dict]:
     """Load the learned-areas file (built gradually from orders)."""
     if not _AREAS_PATH.exists():
@@ -244,15 +268,15 @@ def _load_learned_areas() -> dict[str, dict]:
 
 
 def _cache_valid(cache_path: Path, excel_path: Path) -> bool:
-    """Check if cache is newer than the Excel file and the learned-areas file."""
+    """Check if cache is newer than the Excel file, learned areas and knowledge."""
     if not cache_path.exists():
         return False
-    cache_mtime = cache_path.stat().st_mtime
-    excel_mtime = excel_path.stat().st_mtime
-    ref_mtime = excel_mtime
-    if _AREAS_PATH.exists():
-        ref_mtime = max(ref_mtime, _AREAS_PATH.stat().st_mtime)
-    return cache_mtime >= ref_mtime
+    ref_mtime = max(excel_path.stat().st_mtime,
+                    cache_path.stat().st_mtime)
+    for other in (_AREAS_PATH, _address_knowledge._KNOWLEDGE_PATH):
+        if other.exists() and other.stat().st_mtime > ref_mtime:
+            ref_mtime = other.stat().st_mtime
+    return cache_path.stat().st_mtime >= ref_mtime
 
 
 def build_lookup(excel_path: Path | None = None, force: bool = False) -> dict[str, Any]:
@@ -280,6 +304,10 @@ def build_lookup(excel_path: Path | None = None, force: bool = False) -> dict[st
     city_by_id = {info["id"]: info for info in cities.values()}
     areas = _build_areas(wb, gov_by_id, city_by_id)
     wb.close()
+
+    # Human-confirmed spellings (fix2 §10) become aliases — search, matcher,
+    # canonicalization and suggestions all pick them up from the lookup.
+    _merge_knowledge_aliases(cities, areas)
 
     lookup = {
         "governorates": gov_map,

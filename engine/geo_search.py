@@ -139,7 +139,7 @@ def search_geo(
         elif etype == "city":
             texts = [info["name_ar"], *info.get("aliases", [])]
         else:
-            texts = [info.get("area_name") or key]
+            texts = [info.get("area_name") or key, *info.get("aliases", [])]
         score = _score(query, texts)
         if score < _MIN_SCORE:
             continue
