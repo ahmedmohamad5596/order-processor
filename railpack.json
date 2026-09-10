@@ -8,7 +8,6 @@
     "install": {
       "commands": [
         "...",
-        { "src": "requirements.txt", "dest": "requirements.txt" },
         "python3 -m venv /app/.venv",
         "/app/.venv/bin/pip install -r requirements.txt"
       ]
