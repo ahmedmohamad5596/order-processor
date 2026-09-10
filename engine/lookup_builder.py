@@ -16,6 +16,7 @@ from engine.normalizer import normalize_lookup_key, strip_prefix
 _EXCEL_PATH = Path(__file__).resolve().parent.parent / "egypt_governorates.xlsx"
 _CACHE_PATH = Path(__file__).resolve().parent.parent / "data" / "lookup_cache.json"
 _AREAS_PATH = Path(__file__).resolve().parent.parent / "data" / "areas_learned.json"
+_AREAS_SHEET = "المناطق والأحياء"
 
 
 def _load_excel(path: Path) -> openpyxl.Workbook:
@@ -159,13 +160,86 @@ def _build_cities(wb: openpyxl.Workbook) -> tuple[dict[str, dict], dict[str, str
     return cities, city_to_gov, ambiguous_cities
 
 
-def _build_areas() -> dict[str, dict]:
-    """Load areas from areas_learned.json (built gradually from orders)."""
+def _build_areas(wb: openpyxl.Workbook, gov_by_id: dict, city_by_id: dict) -> dict[str, dict]:
+    """Load areas from the ''المناطق والأحياء'' sheet, then merge learned areas.
+
+    Seed areas (from the Excel sheet) define entity_type explicitly; learned
+    areas (from areas_learned.json, built gradually from orders) add entries
+    the seed has not named yet and fill any missing parent links. A learned
+    entry never overrides the seeded entity_type (e.g. a road stays a road).
+    """
+    areas: dict[str, dict] = {}
+
+    if _AREAS_SHEET in wb.sheetnames:
+        ws = wb[_AREAS_SHEET]
+        for row in ws.iter_rows(min_row=5, values_only=True):
+            aid, etype, gov_name, city_name, area_name, aliases, confidence = row
+            if not area_name:
+                continue
+            norm = normalize_lookup_key(str(area_name))
+            gid = ""
+            cid = ""
+            for ginfo in gov_by_id.values():
+                if ginfo["name_ar"] == (gov_name or "").strip():
+                    gid = ginfo["id"]
+                    break
+            if city_name:
+                for cinfo in city_by_id.values():
+                    if (
+                        cinfo.get("governorate_id") == gid
+                        and cinfo["name_ar"] == (city_name or "").strip()
+                    ):
+                        cid = cinfo["id"]
+                        break
+            aliases_list: list[str] = []
+            if aliases:
+                aliases_list = [
+                    a.strip() for a in str(aliases).replace(",", "،").split("،") if a.strip()
+                ]
+            areas[norm] = {
+                "id": str(aid).strip(),
+                "entity_type": etype.strip(),
+                "governorate_id": gid,
+                "city_id": cid,
+                "area_name": str(area_name).strip(),
+                "aliases": aliases_list,
+                "confidence": confidence or "medium",
+                "source": "seed",
+            }
+
+    # Merge learned areas on top — add new ones, fill missing parents, never
+    # downgrade an entity_type the seed defined.
+    for key, info in _load_learned_areas().items():
+        entry = areas.get(key)
+        if entry is None:
+            entry = {
+                "id": key,
+                "entity_type": str(info.get("entity_type") or "area"),
+                "governorate_id": info.get("governorate_id") or "",
+                "city_id": info.get("city_id") or "",
+                "area_name": str(info.get("area_name") or key),
+                "aliases": list(info.get("aliases") or []),
+                "confidence": info.get("confidence") or "medium",
+                "source": info.get("source") or "learned",
+            }
+        else:
+            if not entry["governorate_id"]:
+                entry["governorate_id"] = info.get("governorate_id") or ""
+            if not entry["city_id"]:
+                entry["city_id"] = info.get("city_id") or ""
+            if not entry["area_name"]:
+                entry["area_name"] = info.get("area_name") or key
+        areas[key] = entry
+
+    return areas
+
+
+def _load_learned_areas() -> dict[str, dict]:
+    """Load the learned-areas file (built gradually from orders)."""
     if not _AREAS_PATH.exists():
         return {}
     with open(_AREAS_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
-    # Re-normalize keys
     return {normalize_lookup_key(k): v for k, v in data.items()}
 
 
@@ -187,7 +261,10 @@ def build_lookup(excel_path: Path | None = None, force: bool = False) -> dict[st
     Returns: {
         "governorates": {norm_name: {id, name_ar, aliases}},
         "cities": {norm_name: {id, governorate_id, gov_name}},
-        "areas": {norm_name: {city_id, area_name, ...}},
+        "areas": {norm_name: {id, entity_type, governorate_id, city_id,
+                               area_name, aliases, confidence, source}},
+        "city_to_gov": {norm_city_name: governorate_id},
+        "ambiguous_cities": {norm_city_name: [governorate_id, ...]},
     }
     """
     excel = excel_path or _EXCEL_PATH
@@ -199,7 +276,9 @@ def build_lookup(excel_path: Path | None = None, force: bool = False) -> dict[st
     wb = _load_excel(excel)
     gov_map = _build_governorates(wb)
     cities, city_to_gov, ambiguous_cities = _build_cities(wb)
-    areas = _build_areas()
+    gov_by_id = {info["id"]: info for info in gov_map.values()}
+    city_by_id = {info["id"]: info for info in cities.values()}
+    areas = _build_areas(wb, gov_by_id, city_by_id)
     wb.close()
 
     lookup = {

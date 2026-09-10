@@ -35,16 +35,24 @@ class TestCase1_ExactMatch:
         assert r.city == self.EXPECTED_CITY
         assert r.city_status == FieldStatus.CONFIRMED
 
-    def test_area_not_fabricated(self):
-        """المنطقة لا تُقلَّد من المدينة — بدون منطقة معروفة تبقى غير محسومة."""
+    def test_area_resolved_from_table(self):
+        """المنطقة تُحسم من قاعدة المناطق الواقعية — لا تُقلَّد من المدينة ولا تُنسخ."""
         r = _match(self.INPUT)
-        assert r.area in (None, "")
-        assert r.area != r.city
+        assert r.area == "التجمع الأول"
+        assert r.area != r.city  # حقيقية، وليست نسخة اسم المدينة
+        assert (r.matched_via.get("area") or "") == "exact"
         assert "fallback_area_eq_city" not in (r.matched_via.get("area") or "")
 
-    def test_needs_review_for_missing_area(self):
-        """مدينة محسومة بلا منطقة حقيقية → مراجعة (لا تُنسخ المدينة في المنطقة)."""
+    def test_no_review_when_area_resolved(self):
+        """منطقة محسومة فعلياً → لا مراجعة."""
         r = _match(self.INPUT)
+        assert r.needs_review is False
+
+    def test_needs_review_when_area_absent(self):
+        """مدينة محسومة بلا منطقة معروفة → مراجعة (لا تُنسخ المدينة في المنطقة)."""
+        r = _match("شارع سمير شحاته، القاهرة الجديدة، القاهرة")
+        assert r.area in (None, "")
+        assert r.area != r.city
         assert r.needs_review is True
         assert "area" in (r.review_reason or "").lower()
 

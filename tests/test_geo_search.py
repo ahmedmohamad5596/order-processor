@@ -31,9 +31,9 @@ class TestExactAndPrefix:
         res = search_geo("القاهره", "governorate")
         assert _find(res, "governorate", "القاهرة") is not None
 
-    def test_city_prefix(self):
-        res = search_geo("جسر", "area")
-        r = _find(res, "area", "جسر السويس")
+    def test_road_prefix(self):
+        res = search_geo("جسر", "road")
+        r = _find(res, "road", "جسر السويس")
         assert r is not None and r["score"] == 100.0
 
     def test_city_alias(self):
@@ -50,10 +50,35 @@ class TestExactAndPrefix:
         assert r is not None and r["city"] == "القاهرة الجديدة"
 
 
+class TestEntityTypes:
+    def test_road_is_not_area(self):
+        """A long road typed `road` must never surface as an `area`."""
+        res = search_geo("جسر", "area")
+        assert all(r["type"] != "road" for r in res)
+        assert _find(res, "area", "جسر السويس") is None
+
+    def test_road_type_searchable(self):
+        res = search_geo("جسر السويس", "road")
+        r = _find(res, "road", "جسر السويس")
+        assert r is not None and r["governorate"] == "القاهرة"
+
+    def test_compound_type(self):
+        res = search_geo("ريتاج", "compound")
+        assert _find(res, "compound", "ريتاج") is not None
+
+    def test_village_type(self):
+        res = search_geo("ميت بره", "village")
+        assert _find(res, "village", "ميت بره") is not None
+
+    def test_default_types_include_roads(self):
+        res = search_geo("كورنيش", "")
+        assert any(r["type"] == "road" for r in res)
+
+
 class TestContainsAndFuzzy:
     def test_contains_tail(self):
-        res = search_geo("السويس", "area")
-        assert _find(res, "area", "جسر السويس") is not None
+        res = search_geo("السويس", "road")
+        assert _find(res, "road", "جسر السويس") is not None
 
     def test_contains_short(self):
         res = search_geo("نصر", "city")
@@ -65,7 +90,7 @@ class TestContainsAndFuzzy:
 
 
 class TestTypeFiltering:
-    def test_types_area_excludes_cities(self):
+    def test_types_area_excludes_roads(self):
         res = search_geo("جسر", "area")
         assert all(r["type"] == "area" for r in res)
 

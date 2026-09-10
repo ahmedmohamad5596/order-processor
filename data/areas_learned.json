@@ -14,9 +14,10 @@
     "confidence": "high"
   },
   "الواحات البحرية": {
-    "city_id": "الواحات",
+    "city_id": "02-005",
     "area_name": "الواحات البحرية",
-    "governorate": "البحيرة",
+    "governorate": "الجيزة",
+    "governorate_id": "02",
     "city": "الواحات البحرية"
   },
   "التجمع الخامس": {

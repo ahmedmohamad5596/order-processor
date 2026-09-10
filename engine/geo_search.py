@@ -1,9 +1,11 @@
 """Geographic entity search for the edit UI autocomplete.
 
-Searches the full Egyptian geography (governorates, cities, areas) built from
+Searches the full Egyptian geography (governorates, cities, and the areas
+layer: neighborhoods/areas, compounds, villages and major roads) built from
 egypt_governorates.xlsx + learned areas. Independent of any UI option list:
 the candidate universe is the complete lookup, never a filtered subset.
 
+Each result carries its entity type — roads are typed `road`, never `area`.
 Matching is progressive: exact → prefix → contains → fuzzy, all against
 normalized Arabic (hamza/ta-marbuta neutral, Persian variants, digit forms).
 """
@@ -14,7 +16,14 @@ from rapidfuzz import fuzz
 from engine.lookup_builder import build_lookup
 from engine.normalizer import normalize_digits, normalize_for_search
 
-_TYPE_ORDER = {"governorate": 0, "city": 1, "area": 2}
+_TYPE_ORDER = {
+    "governorate": 0,
+    "city": 1,
+    "area": 2,
+    "compound": 3,
+    "village": 4,
+    "road": 5,
+}
 _SCORE_EXACT = 100.0
 _SCORE_PREFIX = 98.0
 _SCORE_CONTAINS = 90.0
@@ -77,8 +86,10 @@ def _collect(lookup: dict, types: set[str]) -> list[tuple[str, dict, str]]:
         collected.extend(("governorate", info, key) for key, info in govs.items())
     if "city" in types:
         collected.extend(("city", info, key) for key, info in cities.items())
-    if "area" in types:
-        collected.extend(("area", info, key) for key, info in areas.items())
+    for key, info in areas.items():
+        etype = info.get("entity_type") or "area"
+        if etype in types:
+            collected.append((etype, info, key))
     return collected
 
 
@@ -106,8 +117,8 @@ def search_geo(
 
     wanted = {t.strip() for t in types.split(",") if t.strip()}
     if not wanted:
-        wanted = {"governorate", "city", "area"}
-    wanted = wanted & {"governorate", "city", "area"}
+        wanted = {"governorate", "city", "area", "road", "compound", "village"}
+    wanted = wanted & {"governorate", "city", "area", "road", "compound", "village"}
     if not wanted:
         return []
 
