@@ -30,7 +30,7 @@ const path = require('path');
 const fs = require('fs');
 const { splitCustomers } = require('./splitter');
 const { processCustomers, processCustomer } = require('./assembly');
-const { validatePhone } = require('./phone_validator');
+const { validatePhone, convertArabicDigits } = require('./phone_validator');
 const { getGovernorates, getCitiesForGovernorate, canonicalizeCity } = require('./geo_reference');
 const { getBookCatalog } = require('./book_catalog');
 const { writeToExcel } = require('./excel_writer');
@@ -41,6 +41,36 @@ const { logger, LEVELS } = require('./logger');
 // fallback so an AGNES/other OpenAI-compatible key works without renaming.
 function configuredApiKey() {
     return process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY || '';
+}
+
+// Normalize a phone number to a comparable key (digits only, Arabic digits
+// converted to Western).
+function phoneKey(phone) {
+    if (!phone) return '';
+    return convertArabicDigits(String(phone)).replace(/\D/g, '');
+}
+
+// Normalize a name for case/whitespace-insensitive comparison.
+function nameKey(name) {
+    return String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+// Check whether the new customer duplicates an already-registered customer.
+// Primary match is by shared phone number; falls back to name equality only
+// when neither side has a phone number.
+function findRegisteredDuplicate(candidate, registered) {
+    const candPhones = [phoneKey(candidate.phone1), phoneKey(candidate.phone2)].filter(Boolean);
+    for (const existing of registered) {
+        if (!existing || existing._editId === candidate._editId) continue;
+        const exPhones = [phoneKey(existing.phone1), phoneKey(existing.phone2)].filter(Boolean);
+        for (const p of candPhones) {
+            if (exPhones.includes(p)) return existing;
+        }
+        if (candPhones.length === 0 && exPhones.length === 0 && nameKey(candidate.name) === nameKey(existing.name)) {
+            return existing;
+        }
+    }
+    return null;
 }
 
 const app = express();
@@ -216,8 +246,34 @@ app.post('/api/process', async (req, res) => {
         const currentState = await loadState();
         const currentCustomers = Array.isArray(currentState.customers) ? currentState.customers : [];
         const byEditId = new Map(currentCustomers.map(c => [c._editId, c]));
+
+        // Duplicate registration guard: reject re-registering a customer who is
+        // already saved in state (deleted customers are physically removed from
+        // state, so a deleted customer registers normally again).
+        const registeredPool = currentCustomers.filter(c => c && c.status !== 'rejected' && c.status !== 'already_registered');
+        const existingNotices = new Set(
+            currentCustomers.filter(c => c && c.status === 'already_registered' && c.duplicate_of)
+                .map(c => c.duplicate_of._editId)
+        );
+        const duplicates = [];
         for (const r of results) {
-            byEditId.set(r._editId, r);
+            const dup = findRegisteredDuplicate(r, registeredPool);
+            if (dup) {
+                r.status = 'already_registered';
+                r.duplicate_of = {
+                    _editId: dup._editId,
+                    name: dup.name,
+                    phone1: dup.phone1
+                };
+                duplicates.push(r);
+                if (!existingNotices.has(dup._editId)) {
+                    byEditId.set(r._editId, r);
+                    existingNotices.add(dup._editId);
+                }
+            } else {
+                byEditId.set(r._editId, r);
+                registeredPool.push(r);
+            }
         }
         const saveResult = await saveState({
             customers: Array.from(byEditId.values()),
@@ -273,8 +329,8 @@ app.post('/api/process', async (req, res) => {
 // GET (like the legacy system: /api/orders/export/excel) and POST both work.
 app.all('/api/export', async (req, res) => {
     const state = await loadState();
-    // Rejected orders are excluded — they must never ship to the courier.
-    const customers = (state.customers || []).filter(c => c && c.name && c.status !== 'rejected');
+    // Rejected orders and duplicate-registration notices are excluded — they must never ship to the courier.
+    const customers = (state.customers || []).filter(c => c && c.name && c.status !== 'rejected' && c.status !== 'already_registered');
 
     if (customers.length === 0) {
         return res.status(400).json({
@@ -509,6 +565,9 @@ app.post('/api/customer/:id/reject', async (req, res) => {
     customer.status = 'rejected';
     customer.rejected_reason = (req.body && req.body.reason) ? String(req.body.reason).trim() : 'مرفوض يدويًا';
 
+    // Drop already_registered notices pointing at the rejected record.
+    state.customers = state.customers.filter(c => !(c.status === 'already_registered' && c.duplicate_of && c.duplicate_of._editId === customerId));
+
     const saveResult = await saveState(state);
     if (!saveResult.success) {
         return res.status(500).json({ ok: false, error: 'Failed to save changes' });
@@ -534,6 +593,9 @@ app.delete('/api/customer/:id', async (req, res) => {
     }
     
     state.customers.splice(customerIndex, 1);
+    // Drop already_registered notices that referenced the deleted record so the
+    // customer can be registered again.
+    state.customers = state.customers.filter(c => !(c.status === 'already_registered' && c.duplicate_of && c.duplicate_of._editId === customerId));
     const saveResult = await saveState(state);
     
     if (!saveResult.success) {
@@ -557,6 +619,8 @@ app.post('/api/customers/delete', async (req, res) => {
     
     // Filter out deleted customers
     state.customers = state.customers.filter(c => !idSet.has(c._editId));
+    // Drop already_registered notices that referenced any deleted record.
+    state.customers = state.customers.filter(c => !(c.status === 'already_registered' && c.duplicate_of && idSet.has(c.duplicate_of._editId)));
     
     const saveResult = await saveState(state);
     

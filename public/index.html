@@ -53,6 +53,9 @@
         <button class="tab" data-tab="rejected" onclick="switchTab('rejected')">
             مرفوض <span class="tab-count" id="count-rejected">0</span>
         </button>
+        <button class="tab" data-tab="already_registered" onclick="switchTab('already_registered')">
+            مسجل من قبل <span class="tab-count" id="count-already_registered">0</span>
+        </button>
     </div>
 
     <!-- Bulk Actions Bar -->
@@ -253,7 +256,8 @@ const TAB_LABELS = {
     confirmed: 'مسجَّل',
     needs_review: 'يحتاج مراجعة',
     error: 'خطأ',
-    rejected: 'مرفوض'
+    rejected: 'مرفوض',
+    already_registered: 'مسجل من قبل'
 };
 
 // ── Helpers ────────────────────────────────────────────────
@@ -375,7 +379,7 @@ function switchTab(tab) {
 }
 
 function renderTabCounts() {
-    const counts = { confirmed: 0, needs_review: 0, error: 0, rejected: 0 };
+    const counts = { confirmed: 0, needs_review: 0, error: 0, rejected: 0, already_registered: 0 };
     (processedData || []).forEach(c => { counts[c.status] = (counts[c.status] || 0) + 1; });
     Object.keys(counts).forEach(s => {
         const node = el('count-' + s);
@@ -493,13 +497,18 @@ function buildViewRow(customer) {
 
     const statusClass = customer.status === 'confirmed' ? 'confirmed'
         : customer.status === 'needs_review' ? 'needs-review'
-        : customer.status === 'rejected' ? 'rejected' : 'error';
+        : customer.status === 'rejected' ? 'rejected'
+        : customer.status === 'already_registered' ? 'already' : 'error';
 
     const total = codTotal(customer);
     const isRejected = customer.status === 'rejected';
     const rejectBtn = isRejected
         ? `<button class="btn-icon" style="color:#7a5610;" onclick="openEdit(${customer._editId})">إعادة تسجيل</button>`
         : `<button class="btn-icon" style="color:#8a5f1e;" onclick="rejectCustomer(${customer._editId})">رفض</button>`;
+
+    const dupHtml = customer.status === 'already_registered' && customer.duplicate_of
+        ? `<div class="rejected-reason">مسجل من قبل باسم: ${esc(customer.duplicate_of.name || '-')}${customer.duplicate_of.phone1 ? ' — tel ' + esc(customer.duplicate_of.phone1) : ''}</div>`
+        : '';
 
     return `
         <td><input type="checkbox" class="row-check" ${selectedCustomers.has(customer._editId) ? 'checked' : ''} onchange="toggleSelect(${customer._editId}, this.checked)"></td>
@@ -508,13 +517,15 @@ function buildViewRow(customer) {
         <td>${addressStr}${addrSug}</td>
         <td>${booksHtml}</td>
         <td style="white-space:nowrap;font-weight:700;">${total > 0 ? total + ' ج' : '-'}</td>
-        <td><span class="status ${statusClass}">${TAB_LABELS[customer.status] || customer.status}</span>${isRejected && customer.rejected_reason ? `<div class="rejected-reason">${esc(customer.rejected_reason)}</div>` : ''}</td>
+        <td><span class="status ${statusClass}">${TAB_LABELS[customer.status] || customer.status}</span>${isRejected && customer.rejected_reason ? `<div class="rejected-reason">${esc(customer.rejected_reason)}</div>` : ''}${dupHtml}</td>
         <td style="max-width:280px;">${reasonsHtml}</td>
         <td>
             <div class="actions-cell">
-                <button class="btn-icon edit" onclick="openEdit(${customer._editId})">تعديل</button>
-                ${rejectBtn}
-                <button class="btn-icon delete" onclick="deleteCustomer(${customer._editId})">حذف</button>
+                ${customer.status === 'already_registered'
+                    ? `<button class="btn-icon delete" onclick="deleteCustomer(${customer._editId})">حذف التنبيه</button>`
+                    : `<button class="btn-icon edit" onclick="openEdit(${customer._editId})">تعديل</button>
+                       ${rejectBtn}
+                       <button class="btn-icon delete" onclick="deleteCustomer(${customer._editId})">حذف</button>`}
             </div>
         </td>
     `;
