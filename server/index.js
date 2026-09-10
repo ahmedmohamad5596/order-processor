@@ -31,7 +31,7 @@ const fs = require('fs');
 const { splitCustomers } = require('./splitter');
 const { processCustomers, processCustomer } = require('./assembly');
 const { validatePhone, convertArabicDigits } = require('./phone_validator');
-const { getGovernorates, getCitiesForGovernorate, canonicalizeCity } = require('./geo_reference');
+const { getGovernorates, getCitiesForGovernorate, canonicalizeCity, searchGeo } = require('./geo_reference');
 const { getBookCatalog } = require('./book_catalog');
 const { writeToExcel } = require('./excel_writer');
 const { initDatabase, loadState, saveState, clearState, getPool } = require('./state_store');
@@ -661,6 +661,20 @@ app.get('/api/geo/cities', async (req, res) => {
     if (!ref.ok) return res.status(500).json({ ok: false, error: ref.error });
     if (ref.result.error) return res.status(404).json({ ok: false, error: ref.result.error });
     res.json({ ok: true, governorate: ref.result.governorate, cities: ref.result.cities });
+});
+
+// Searchable autocomplete over the full geographic reference. The UI autocomplete
+// calls this; free text is always allowed regardless of whether it matches.
+app.get('/api/geo/search', async (req, res) => {
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const types = typeof req.query.types === 'string' ? req.query.types.trim() : '';
+    let limit = parseInt(req.query.limit, 10);
+    if (!Number.isFinite(limit) || limit < 1) limit = 10;
+    if (limit > 25) limit = 25;
+    if (!q) return res.json({ ok: true, q, results: [] });
+    const ref = await searchGeo(q, types, limit);
+    if (!ref.ok) return res.status(500).json({ ok: false, error: ref.error });
+    res.json({ ok: true, q, results: ref.result.results });
 });
 
 // Book catalog for the edit modal's add-from-list picker (book → stage → qty → price).

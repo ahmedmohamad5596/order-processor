@@ -25,6 +25,7 @@ import json
 sys.path.insert(0, r'${ENGINE_DIR.replace(/\\/g, '\\\\')}')
 
 from engine.lookup_builder import build_lookup
+from engine.geo_search import search_geo
 
 lookup = build_lookup()
 
@@ -87,6 +88,12 @@ def main():
                          ensure_ascii=False))
     elif cmd == 'canonicalize':
         print(json.dumps(canonicalize(req), ensure_ascii=False))
+    elif cmd == 'search':
+        q = req.get('q') or ''
+        types = req.get('types') or ''
+        limit = req.get('limit')
+        results = search_geo(q, types, lookup, limit)
+        print(json.dumps({'results': results, 'q': q}, ensure_ascii=False))
     else:
         print(json.dumps({'error': 'unknown cmd'}, ensure_ascii=False))
 
@@ -156,4 +163,15 @@ async function canonicalizeCity(city, governorate) {
     return runGeo({ cmd: 'canonicalize', city, governorate });
 }
 
-module.exports = { getGovernorates, getCitiesForGovernorate, canonicalizeCity };
+/**
+ * Search the full geographic reference (governorates/cities/areas).
+ * @param {string} q raw query
+ * @param {string} [types] comma-separated entity types; empty = all
+ * @param {number} [limit] max results (clamped server-side to 25)
+ * @returns {Promise<{ok, result?: {results: object[], q: string}, error?}>}
+ */
+async function searchGeo(q, types, limit) {
+    return runGeo({ cmd: 'search', q, types, limit });
+}
+
+module.exports = { getGovernorates, getCitiesForGovernorate, canonicalizeCity, searchGeo };
