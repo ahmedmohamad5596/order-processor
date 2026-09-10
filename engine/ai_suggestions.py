@@ -17,6 +17,12 @@ API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
 MAX_RETRIES = 2
 RETRY_DELAY_MS = 1000
 
+# A city suggestion must be scoped to one governorate's COMPLETE city list.
+# Lists above this ceiling are refused (never sliced): a fixed 50-entry slice
+# biases the AI toward alphabetically-first entries and defeats the
+# full-reference decoupling.
+CITY_LIST_CEILING = 60
+
 
 async def suggest_governorate(address_text: str, all_governorates: list[str]) -> dict:
     """Suggest the closest governorate from the list.
@@ -47,7 +53,7 @@ async def suggest_governorate(address_text: str, all_governorates: list[str]) ->
     prompt = f"""أنت مساعد متخصص في تعيين المحافظات المصرية.
 
 النص القادم هو عنوان مصري لم يتم تحديد محافظته تلقائيًا.
-من القائمة التالية، اختر أقرب محافظة للنص.
+حدد المحافظة التي يذكرها النص فعليًا من القائمة الكاملة التالية.
 
 النص: {address_text}
 
@@ -56,7 +62,7 @@ async def suggest_governorate(address_text: str, all_governorates: list[str]) ->
 
 أرجع JSON فقط بالصيغة التالية:
 {{
-  "suggestion": "اسم المحافظة الأقرب",
+  "suggestion": "اسم المحافظة" أو null,
   "confidence": 85,
   "reasoning": "سبب الاختيار"
 }}
@@ -64,7 +70,8 @@ async def suggest_governorate(address_text: str, all_governorates: list[str]) ->
 ملاحظات:
 - اختر من القائمة فقط (لا تختر اسمًا خارجها)
 - confidence من 0 إلى 100
-- إذا كنت متأكدًا جدًا اجعل confidence > 90
+- إذا كان النص لا يحدد محافظة من هذه القائمة بشكل قاطع، اجعل "suggestion": null و confidence: 0
+- لا تختر شيئًا لمجرد أنه الأقرب — لا مكان للتخمين
 - أرجع JSON فقط بدون أي نص إضافي"""
 
     return await _call_ai(prompt)
@@ -86,30 +93,39 @@ async def suggest_city(address_text: str, governorate: str, all_cities: list[str
             'error': str | None
         }
     """
-    if not API_KEY:
-        return {'suggestion': None, 'confidence': 0, 'reasoning': None,
-                'error': 'OPENROUTER_API_KEY not configured'}
-
     if not address_text or not all_cities:
         return {'suggestion': None, 'confidence': 0, 'reasoning': None,
                 'error': 'Empty input or empty city list'}
 
-    # Filter cities by governorate if possible (simplified)
-    city_list = '\n'.join(f'- {c}' for c in sorted(all_cities[:50]))  # Limit for context
+    # Never slice the candidate universe. If the caller could not scope the
+    # city list to a single governorate, refuse instead of guessing from an
+    # arbitrary subset.
+    if len(all_cities) > CITY_LIST_CEILING:
+        return {'suggestion': None, 'confidence': 0, 'reasoning': None,
+                'error': f'city list has {len(all_cities)} entries — scope to the governorate first',
+                'failure_type': 'no_scope'}
+
+    if not API_KEY:
+        return {'suggestion': None, 'confidence': 0, 'reasoning': None,
+                'error': 'OPENROUTER_API_KEY not configured'}
+
+    city_list = '\n'.join(f'- {c}' for c in sorted(all_cities))
+    scope_line = (f'هذه هي القائمة الكاملة لمدن محافظة {governorate}.' if governorate
+                  else 'حدد المدينة التي يذكرها النص فعليًا.')
 
     prompt = f"""أنت مساعد متخصص في تعيين المدن المصرية.
 
-النص القادم هو عنوان في محافظة {governorate} لم يتم تحديد مدينته تلقائيًا.
-من القائمة التالية، اختر أقرب مدينة للنص.
+النص القادم هو عنوان مصري لم يتم تحديد مدينته تلقائيًا.
+{scope_line}
 
 النص: {address_text}
 
-قائمة المدن (عينة):
+القائمة الكاملة للمدن:
 {city_list}
 
 أرجع JSON فقط بالصيغة التالية:
 {{
-  "suggestion": "اسم المدينة الأقرب",
+  "suggestion": "اسم المدينة" أو null,
   "confidence": 85,
   "reasoning": "سبب الاختيار"
 }}
@@ -117,7 +133,8 @@ async def suggest_city(address_text: str, governorate: str, all_cities: list[str
 ملاحظات:
 - اختر من القائمة فقط (لا تختر اسمًا خارجها)
 - confidence من 0 إلى 100
-- إذا كنت متأكدًا جدًا اجعل confidence > 90
+- إذا كان النص لا يحدد مدينة من هذه القائمة بشكل قاطع، اجعل "suggestion": null و confidence: 0
+- لا تختر شيئًا لمجرد أنه الأقرب — لا مكان للتخمين
 - أرجع JSON فقط بدون أي نص إضافي"""
 
     return await _call_ai(prompt)

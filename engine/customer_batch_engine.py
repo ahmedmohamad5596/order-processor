@@ -247,23 +247,37 @@ def _build_failure(suggestion_type: str, error: str) -> dict:
 
 
 async def suggest_address_field(address_text: str, field_type: str, reference_list: list[str],
-                                 system_msg: str) -> dict:
-    """Suggest a governorate or city from reference list."""
-    list_str = '\n'.join(f'- {item}' for item in reference_list[:50])
+                                 system_msg: str, scope_name: str = '') -> dict:
+    """Suggest a governorate or city from a COMPLETE reference list.
+
+    The list must already be the full candidate universe (all governorates, or
+    every city of one governorate). It is NEVER sliced: an arbitrary subset
+    biases the AI toward alphabetically-first entries and invites fabrication.
+    """
+    if len(reference_list) > 60:
+        return {'suggestion': None, 'confidence': 0, 'reasoning': None,
+                'type': field_type,
+                'error': 'candidate list too large — scope it before suggesting',
+                'failure_type': 'no_scope'}
+    list_str = '\n'.join(f'- {item}' for item in reference_list)
     field_label = 'محافظة' if field_type == 'governorate' else 'مدينة'
+    if field_type == 'city' and scope_name:
+        scope_line = f'هذه هي القائمة الكاملة لمدن محافظة {scope_name}.'
+    else:
+        scope_line = 'حدد ما يذكره النص فعليًا.'
     prompt = f"""أنت مساعد متخصص في تعيين المواقع المصرية.
 
 النص القادم هو عنوان مصري لم يتم تحديد {field_label}ه تلقائيًا.
-من القائمة التالية، اختر أقرب {field_label} للنص.
+{scope_line}
 
 النص: {address_text}
 
-قائمة {field_label} المتاحة:
+القائمة الكاملة المتاحة:
 {list_str}
 
 أرجع JSON فقط بالصيغة التالية:
 {{
-  "suggestion": "اسم {field_label} الأقرب",
+  "suggestion": "اسم {field_label} الأقرب" أو null,
   "confidence": 85,
   "reasoning": "سبب الاختيار"
 }}
@@ -271,7 +285,8 @@ async def suggest_address_field(address_text: str, field_type: str, reference_li
 ملاحظات:
 - اختر من القائمة فقط
 - confidence من 0 إلى 100
-- إذا كنت متأكدًا جدًا اجعل confidence > 90
+- إذا كان النص لا يحدد {field_label} من هذه القائمة بشكل قاطع، اجعل "suggestion": null و confidence: 0
+- لا تختر شيئًا لمجرد أنه الأقرب — لا مكان للتخمين
 - أرجع JSON فقط بدون أي نص إضافي"""
     return await _call_ai(prompt, system_msg, 'no_match')
 
@@ -427,7 +442,7 @@ async def process_customer_batch(customer_data: dict) -> dict:
                     for cinfo in lookup['cities'].values():
                         if cinfo.get('governorate_id') == matched_gid:
                             scoped_cities.append(cinfo['name_ar'])
-            all_cities = scoped_cities or [v['name_ar'] for v in lookup['cities'].values()]
+            all_cities = scoped_cities
 
             tasks = []
             if gov_status != 'confirmed':
@@ -435,10 +450,15 @@ async def process_customer_batch(customer_data: dict) -> dict:
                     customer_data['address_raw'], 'governorate', all_govs,
                     'أنت مساعد متخصص في تعيين المحافظات المصرية.'
                 ))
-            if city_status != 'confirmed':
+            elif city_status != 'confirmed' and all_cities:
+                # City suggestions are only attempted against the CONFIRMED
+                # governorate's complete city list. With no governorate scope
+                # there is no honest candidate universe; the hint re-match
+                # below resolves the city from in-text area/street evidence.
                 tasks.append(suggest_address_field(
                     customer_data['address_raw'], 'city', all_cities,
-                    'أنت مساعد متخصص في تعيين المدن المصرية.'
+                    'أنت مساعد متخصص في تعيين المدن المصرية.',
+                    scope_name=gov_name or ''
                 ))
 
             gov_sug = city_sug = None
@@ -449,10 +469,12 @@ async def process_customer_batch(customer_data: dict) -> dict:
                 if gov_status != 'confirmed':
                     gov_sug = sug_results[idx]
                     idx += 1
-                if city_status != 'confirmed':
+                elif city_status != 'confirmed' and all_cities:
                     city_sug = sug_results[idx]
                 for sug in (gov_sug, city_sug):
                     if sug is None:
+                        continue
+                    if sug.get('failure_type') == 'no_scope':
                         continue
                     if not sug.get('error'):
                         ai_stats['success'] += 1

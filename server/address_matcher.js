@@ -50,17 +50,25 @@ result = match_address(address_text, lookup)
 
 # AI suggestion for failed fields (Task 15)
 ai_suggestion = None
-if result.needs_review:
-    all_govs = [v['name_ar'] for v in lookup['governorates'].values()]
-    all_cities = [v['name_ar'] for v in lookup['cities'].values()]
-    gov_status = result.governorate_status.value if hasattr(result.governorate_status, 'value') else str(result.governorate_status)
-    city_status = result.city_status.value if hasattr(result.city_status, 'value') else str(result.city_status)
-    if gov_status != 'confirmed':
-        s = sync_suggest_governorate(address_text, all_govs)
-    elif city_status != 'confirmed':
-        s = sync_suggest_city(address_text, result.governorate or '', all_cities)
-    else:
-        s = None
+    if result.needs_review:
+        all_govs = [v['name_ar'] for v in lookup['governorates'].values()]
+        gov_status = result.governorate_status.value if hasattr(result.governorate_status, 'value') else str(result.governorate_status)
+        city_status = result.city_status.value if hasattr(result.city_status, 'value') else str(result.city_status)
+        if gov_status != 'confirmed':
+            s = sync_suggest_governorate(address_text, all_govs)
+        elif city_status != 'confirmed':
+            # Scope city suggestions to the matched governorate's COMPLETE city
+            # list — never the national list (sync_suggest_city refuses it).
+            gov_id = None
+            for g in lookup['governorates'].values():
+                if g['name_ar'] == result.governorate:
+                    gov_id = g['id']
+                    break
+            scoped = [v['name_ar'] for v in lookup['cities'].values()
+                      if v.get('governorate_id') == gov_id] if gov_id else []
+            s = sync_suggest_city(address_text, result.governorate or '', scoped) if scoped else None
+        else:
+            s = None
     if s:
         ai_suggestion = {
             'suggestion': s.get('suggestion'),
